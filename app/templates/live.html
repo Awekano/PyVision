@@ -1,0 +1,252 @@
+{% extends "base.html" %}
+{% block title %}PyVision - Live{% endblock %}
+
+{% block content %}
+<h1>Live</h1>
+
+<p>Mode normal : flux caméra IP via le serveur. Mode démo : webcam locale avec détection de mouvement.</p>
+
+<div style="display:flex; gap:12px; margin:16px 0; flex-wrap:wrap;">
+  <button type="button" id="normalModeBtn">Mode normal</button>
+  <button type="button" id="demoModeBtn">Démo webcam</button>
+</div>
+
+<p id="liveStatus">Mode actuel : normal</p>
+
+<div id="serverLiveBox">
+  <img
+    id="serverLive"
+    src="{{ url_for('main.live_feed') }}"
+    alt="Flux live serveur"
+    style="max-width: 900px; width:100%; border-radius:12px; background:#000;"
+  >
+</div>
+
+<div id="demoLiveBox" style="display:none;">
+  <video
+    id="demoVideo"
+    autoplay
+    muted
+    playsinline
+    style="max-width: 900px; width:100%; border-radius:12px; background:#000;"
+  ></video>
+  <canvas id="motionCanvas" width="320" height="240" style="display:none;"></canvas>
+</div>
+
+<script>
+  const normalModeBtn = document.getElementById("normalModeBtn");
+  const demoModeBtn = document.getElementById("demoModeBtn");
+  const liveStatus = document.getElementById("liveStatus");
+
+  const serverLiveBox = document.getElementById("serverLiveBox");
+  const demoLiveBox = document.getElementById("demoLiveBox");
+  const demoVideo = document.getElementById("demoVideo");
+  const motionCanvas = document.getElementById("motionCanvas");
+  const ctx = motionCanvas.getContext("2d", { willReadFrequently: true });
+
+  let mediaStream = null;
+  let mediaRecorder = null;
+  let recordedChunks = [];
+  let previousFrame = null;
+  let motionInterval = null;
+  let isRecording = false;
+  let motionCooldown = false;
+
+  const MOTION_THRESHOLD = 18;      // sensibilité pixel
+  const MOTION_PIXELS_MIN = 3500;   // nombre mini de pixels différents
+
+  function setNormalMode() {
+    serverLiveBox.style.display = "block";
+    demoLiveBox.style.display = "none";
+    liveStatus.textContent = "Mode actuel : normal";
+
+    stopDemoMode();
+  }
+
+  function stopDemoMode() {
+    if (motionInterval) {
+      clearInterval(motionInterval);
+      motionInterval = null;
+    }
+
+    previousFrame = null;
+
+    if (mediaStream) {
+      mediaStream.getTracks().forEach(track => track.stop());
+      mediaStream = null;
+    }
+
+    demoVideo.srcObject = null;
+  }
+
+  async function setDemoMode() {
+    try {
+      liveStatus.textContent = "Demande d'accès à la webcam...";
+      mediaStream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: false
+      });
+
+      demoVideo.srcObject = mediaStream;
+      serverLiveBox.style.display = "none";
+      demoLiveBox.style.display = "block";
+      liveStatus.textContent = "Mode actuel : démo webcam avec détection de mouvement";
+
+      startMotionDetection();
+    } catch (err) {
+      console.error(err);
+      liveStatus.textContent = "Impossible d'accéder à la webcam.";
+    }
+  }
+
+  function pickMimeType() {
+    const candidates = [
+      "video/webm;codecs=vp9,opus",
+      "video/webm;codecs=vp8,opus",
+      "video/webm",
+      "video/mp4"
+    ];
+
+    for (const type of candidates) {
+      if (window.MediaRecorder && MediaRecorder.isTypeSupported(type)) {
+        return type;
+      }
+    }
+    return "";
+  }
+
+  function startMotionDetection() {
+    if (motionInterval) {
+      clearInterval(motionInterval);
+    }
+
+    motionInterval = setInterval(() => {
+      if (!demoVideo.videoWidth || !demoVideo.videoHeight) return;
+      if (isRecording || motionCooldown) return;
+
+      ctx.drawImage(demoVideo, 0, 0, motionCanvas.width, motionCanvas.height);
+      const frame = ctx.getImageData(0, 0, motionCanvas.width, motionCanvas.height);
+      const data = frame.data;
+
+      if (!previousFrame) {
+        previousFrame = new Uint8ClampedArray(data);
+        return;
+      }
+
+      let changedPixels = 0;
+
+      for (let i = 0; i < data.length; i += 4) {
+        const dr = Math.abs(data[i] - previousFrame[i]);
+        const dg = Math.abs(data[i + 1] - previousFrame[i + 1]);
+        const db = Math.abs(data[i + 2] - previousFrame[i + 2]);
+
+        if ((dr + dg + db) > MOTION_THRESHOLD) {
+          changedPixels++;
+        }
+      }
+
+      previousFrame = new Uint8ClampedArray(data);
+
+      if (changedPixels > MOTION_PIXELS_MIN) {
+        liveStatus.textContent = "Mouvement détecté : enregistrement 10 secondes...";
+        startAutoRecording();
+      }
+    }, 250);
+  }
+
+  async function uploadRecordedBlob(videoBlob, ext) {
+  if (!videoBlob) {
+    throw new Error("Blob vidéo introuvable");
+  }
+
+  const formData = new FormData();
+  formData.append("video", videoBlob, `motion_demo_${Date.now()}.${ext}`);
+
+  const response = await fetch("/upload_webcam_recording", {
+    method: "POST",
+    body: formData
+  });
+
+  let data = {};
+  try {
+    data = await response.json();
+  } catch (e) {
+    throw new Error("Réponse JSON invalide du serveur");
+  }
+
+  if (!response.ok) {
+    throw new Error(data.error || "Erreur d'upload");
+  }
+
+  return data;
+}	
+
+  function startAutoRecording() {
+    if (!mediaStream || isRecording) return;
+
+    isRecording = true;
+    motionCooldown = true;
+    recordedChunks = [];
+
+    try {
+      const mimeType = pickMimeType();
+      mediaRecorder = mimeType
+        ? new MediaRecorder(mediaStream, { mimeType })
+        : new MediaRecorder(mediaStream);
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          recordedChunks.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = async () => {
+  try {
+    if (!recordedChunks || recordedChunks.length === 0) {
+      throw new Error("Aucune donnée vidéo enregistrée");
+    }
+
+    const finalType = mediaRecorder.mimeType || "video/webm";
+    const ext = finalType.includes("mp4") ? "mp4" : "webm";
+    const videoBlob = new Blob(recordedChunks, { type: finalType });
+
+    liveStatus.textContent = "Envoi de la vidéo au serveur...";
+    const result = await uploadRecordedBlob(videoBlob, ext);
+
+    console.log("Upload OK :", result);
+    liveStatus.textContent = result.message
+      ? `${result.message} : ${result.filename || ""}`
+      : `Vidéo enregistrée : ${result.filename || ""}`;
+  } catch (err) {
+    console.error("Erreur upload :", err);
+    liveStatus.textContent = `Échec de l'envoi au serveur : ${err.message || err}`;
+  } finally {
+    isRecording = false;
+
+    setTimeout(() => {
+      motionCooldown = false;
+      liveStatus.textContent = "Mode démo actif : surveillance de mouvement";
+    }, 3000);
+  }
+};
+
+      mediaRecorder.start();
+
+      setTimeout(() => {
+        if (mediaRecorder && mediaRecorder.state !== "inactive") {
+          mediaRecorder.stop();
+        }
+      }, 10000);
+
+    } catch (err) {
+      console.error(err);
+      isRecording = false;
+      motionCooldown = false;
+      liveStatus.textContent = "Impossible de démarrer l'enregistrement.";
+    }
+  }
+
+  normalModeBtn.addEventListener("click", setNormalMode);
+  demoModeBtn.addEventListener("click", setDemoMode);
+</script>
+{% endblock %}

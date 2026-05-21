@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <h2>Paramètres des alertes mail</h2>
+
+    <form method="POST" class="mt-4">
+        <div class="form-check mb-3">
+            <input class="form-check-input" type="checkbox" name="enabled" id="enabled"
+                   {% if settings.enabled %}checked{% endif %}>
+            <label class="form-check-label" for="enabled">
+                Activer l'envoi des alertes mail
+            </label>
+        </div>
+
+        <div class="mb-3">
+            <label for="start_time" class="form-label">Heure de début</label>
+            <input type="time" class="form-control" name="start_time" id="start_time"
+                   value="{{ settings.start_time.strftime('%H:%M') }}" required>
+        </div>
+
+        <div class="mb-3">
+            <label for="end_time" class="form-label">Heure de fin</label>
+            <input type="time" class="form-control" name="end_time" id="end_time"
+                   value="{{ settings.end_time.strftime('%H:%M') }}" required>
+        </div>
+
+        <button type="submit" class="btn btn-primary">Enregistrer</button>
+    </form>
+</div>
+{% endblock %}

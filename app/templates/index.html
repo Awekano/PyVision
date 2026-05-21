@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}PyVision - Accueil{% endblock %}
+
+{% block content %}
+<div class="hero">
+  <div>
+    <h1>Accueil</h1>
+    <p class="muted">Accès rapide aux fonctionnalités principales.</p>
+  </div>
+
+  <div class="status">
+    <div class="status__dot"></div>
+    <div>
+      <div class="status__title">Connecté</div>
+      <div class="muted">{{ current_user.username }}</div>
+    </div>
+  </div>
+</div>
+
+<section class="grid3">
+  <a class="tile" href="{{ url_for('main.live') }}">
+    <div class="tile__icon">📡</div>
+    <div class="tile__title">Live</div>
+    <div class="tile__desc">Afficher le flux en direct de la caméra.</div>
+    <div class="tile__cta">Ouvrir →</div>
+  </a>
+
+  <a class="tile" href="{{ url_for('main.recordings') }}">
+    <div class="tile__icon">🎞️</div>
+    <div class="tile__title">Enregistrements</div>
+    <div class="tile__desc">Consulter et télécharger les vidéos capturées.</div>
+    <div class="tile__cta">Ouvrir →</div>
+  </a>
+
+  <a class="tile" href="{{ url_for('main.events') }}">
+    <div class="tile__icon">🧾</div>
+    <div class="tile__title">Événements</div>
+    <div class="tile__desc">Voir le journal : détection, alarme, actions.</div>
+    <div class="tile__cta">Ouvrir →</div>
+  </a>
+</section>
+
+<section class="grid2">
+  <div class="card">
+    <h2>Raccourcis</h2>
+    <div class="actions">
+      <a class="btn btn--ghost" href="{{ url_for('main.events', kind='detection') }}">Détections</a>
+      <a class="btn btn--ghost" href="{{ url_for('main.events', kind='alarme') }}">Alarmes</a>
+      <a class="btn btn--ghost" href="{{ url_for('main.recordings') }}">Derniers clips</a>
+    </div>
+  </div>
+</section>
+{% endblock %}

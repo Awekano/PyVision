@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}PyVision - Enregistrements{% endblock %}
+
+{% block content %}
+<div class="hero recordings-hero">
+  <div>
+    <h1>Enregistrements</h1>
+    <p class="muted">Consultation des vidéos stockées sur le serveur Linux.</p>
+  </div>
+  <div class="status">
+    <div class="status__dot"></div>
+    <div>
+      <div class="status__title">{{ rows|length }} vidéo(s)</div>
+      <div class="muted">Dossier : recordings/</div>
+    </div>
+  </div>
+</div>
+
+{% if error %}
+  <div class="flash flash--error">{{ error }}</div>
+{% endif %}
+
+{% if rows %}
+  <section class="recordings-grid">
+    {% for row in rows %}
+      <article class="card recording-card">
+        <div class="recording-card__head">
+          <div>
+            <h2>{{ row.name }}</h2>
+            <div class="muted">{{ row.dt.strftime('%d/%m/%Y %H:%M:%S') }} • {{ row.size_mb }} Mo</div>
+          </div>
+          <div class="pill">{{ row.ext }}</div>
+        </div>
+
+        {% if row.can_preview %}
+          <video class="recording-video" controls preload="metadata">
+            <source src="{{ url_for('main.recordings_view', rel_path=row.rel_path) }}" type="video/mp4">
+            Votre navigateur ne peut pas lire cette vidéo.
+          </video>
+        {% else %}
+          <div class="hint">
+            Aperçu non intégré pour ce format. Télécharge le fichier pour le lire localement.
+          </div>
+        {% endif %}
+
+        <div class="actions recording-actions">
+          {% if row.can_preview %}
+            <a class="btn btn--ghost" href="{{ url_for('main.recordings_view', rel_path=row.rel_path) }}" target="_blank" rel="noopener">Ouvrir</a>
+          {% endif %}
+          <a class="btn btn--primary" href="{{ url_for('main.recordings_download', rel_path=row.rel_path) }}">Télécharger</a>
+        </div>
+      </article>
+    {% endfor %}
+  </section>
+{% else %}
+  <div class="card">
+    <h2>Aucune vidéo trouvée</h2>
+    <p class="muted">Ajoute des fichiers .mp4 dans le dossier <code>recordings/</code> du serveur pour qu'ils apparaissent ici.</p>
+  </div>
+{% endif %}
+{% endblock %}

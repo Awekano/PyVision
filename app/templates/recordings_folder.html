@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Enregistrements (dossier recordings)</h2>
+
+{% if error %}
+  <p style="color:red;">{{ error }}</p>
+{% endif %}
+
+<table>
+  <thead>
+    <tr>
+      <th>Fichier</th>
+      <th>Date</th>
+      <th>Taille</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in rows %}
+      <tr>
+        <td>{{ r.rel_path }}</td>
+        <td>{{ r.dt.strftime("%d/%m/%Y %H:%M:%S") }}</td>
+        <td>{{ (r.size / 1024 / 1024) | round(1) }} MB</td>
+        <td><a href="{{ url_for('main.recordings_folder_download', rel_path=r.rel_path) }}">Télécharger</a></td>
+      </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

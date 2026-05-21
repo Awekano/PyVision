@@ -1,0 +1,33 @@
+
+{% extends "base.html" %}
+{% block title %}PyVision - Connexion{% endblock %}
+
+{% block content %}
+<section class="auth">
+  <div class="card auth-card">
+    <div class="auth-head">
+      <div class="pill">Accès sécurisé</div>
+      <h1>Connexion</h1>
+      <p class="muted">Connecte-toi pour accéder au live, aux enregistrements et aux événements.</p>
+    </div>
+
+    <form method="post" class="form" action="{{ url_for('auth.login_post') }}">
+      <label class="field">
+        <span>Identifiant</span>
+        <input name="username" type="text" autocomplete="username" required placeholder="ex: enzo">
+      </label>
+
+      <label class="field">
+        <span>Mot de passe</span>
+        <input name="password" type="password" autocomplete="current-password" required placeholder="••••••••">
+      </label>
+
+      <button class="btn btn--primary btn--block" type="submit">Se connecter</button>
+
+      <div class="auth-foot">
+        <span class="muted">PyVision — accès réservé</span>
+      </div>
+    </form>
+  </div>
+ </section>
+{% endblock %}

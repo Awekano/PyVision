@@ -1,0 +1,339 @@
+{% extends "base.html" %}
+
+{% block title %}Évènements{% endblock %}
+
+{% block content %}
+<style>
+    .page-card {
+        background: #ffffff;
+        border-radius: 20px;
+        padding: 24px;
+        box-shadow: 0 10px 28px rgba(0,0,0,0.10);
+        margin-top: 20px;
+        color: #111827;
+    }
+
+    .page-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        flex-wrap: wrap;
+        gap: 16px;
+        margin-bottom: 22px;
+    }
+
+    .page-header h1 {
+        margin: 0;
+        font-size: 30px;
+        color: #111827;
+    }
+
+    .page-header p {
+        margin: 6px 0 0;
+        color: #6b7280;
+        font-size: 14px;
+    }
+
+    .toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: center;
+        margin-bottom: 18px;
+    }
+
+    .filter-form {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: center;
+    }
+
+    .filter-select {
+        padding: 10px 12px;
+        border-radius: 12px;
+        border: 1px solid #d1d5db;
+        background: #fff;
+        color: #111827;
+        font-size: 14px;
+        min-width: 180px;
+    }
+
+    .filter-btn,
+    .reset-btn,
+    .video-link,
+    .delete-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        text-decoration: none;
+        padding: 10px 14px;
+        border-radius: 12px;
+        font-size: 13px;
+        font-weight: 700;
+        transition: 0.2s ease;
+        border: none;
+        cursor: pointer;
+    }
+
+    .filter-btn {
+        background: #111827;
+        color: white;
+    }
+
+    .filter-btn:hover {
+        background: #1f2937;
+    }
+
+    .reset-btn {
+        background: #e5e7eb;
+        color: #111827;
+    }
+
+    .reset-btn:hover {
+        background: #d1d5db;
+    }
+
+    .table-wrapper {
+        overflow-x: auto;
+        border-radius: 16px;
+        border: 1px solid #e5e7eb;
+    }
+
+    .custom-table {
+        width: 100%;
+        border-collapse: collapse;
+        min-width: 1050px;
+        background: white;
+    }
+
+    .custom-table thead {
+        background: linear-gradient(90deg, #111827, #1f2937);
+        color: white;
+    }
+
+    .custom-table th,
+    .custom-table td {
+        padding: 14px 16px;
+        text-align: left;
+        vertical-align: middle;
+    }
+
+    .custom-table th {
+        font-size: 14px;
+        font-weight: 700;
+        white-space: nowrap;
+    }
+
+    .custom-table tbody tr {
+        border-bottom: 1px solid #e5e7eb;
+        transition: background 0.2s ease;
+    }
+
+    .custom-table tbody tr:nth-child(even) {
+        background: #f9fafb;
+    }
+
+    .custom-table tbody tr:hover {
+        background: #eff6ff;
+    }
+
+    .col-id {
+        width: 70px;
+        font-weight: 700;
+        color: #111827;
+    }
+
+    .col-date {
+        min-width: 170px;
+        white-space: nowrap;
+    }
+
+    .path-cell {
+        max-width: 280px;
+        word-break: break-word;
+        color: #374151;
+        font-size: 13px;
+    }
+
+    .badge {
+        display: inline-block;
+        padding: 7px 11px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.3px;
+    }
+
+    .badge-detection {
+        background: #dbeafe;
+        color: #1d4ed8;
+    }
+
+    .badge-alarme {
+        background: #fee2e2;
+        color: #b91c1c;
+    }
+
+    .badge-video {
+        background: #dcfce7;
+        color: #15803d;
+    }
+
+    .badge-default {
+        background: #e5e7eb;
+        color: #374151;
+    }
+
+    .video-link {
+        background: #2563eb;
+        color: white;
+    }
+
+    .video-link:hover {
+        background: #1d4ed8;
+    }
+
+    .delete-btn {
+        background: #dc2626;
+        color: white;
+    }
+
+    .delete-btn:hover {
+        background: #b91c1c;
+    }
+
+    .actions-cell {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+    .muted-value {
+        color: #9ca3af;
+        font-style: italic;
+    }
+
+    .empty-state {
+        text-align: center;
+        padding: 34px;
+        color: #6b7280;
+        font-style: italic;
+        background: #fafafa;
+    }
+
+    @media (max-width: 900px) {
+        .page-header {
+            flex-direction: column;
+            align-items: flex-start;
+        }
+
+        .filter-form {
+            width: 100%;
+        }
+
+        .filter-select {
+            width: 100%;
+        }
+    }
+</style>
+
+<div class="page-card">
+    <div class="page-header">
+        <div>
+            <h1>Journal des évènements</h1>
+            <p>Historique des détections, alarmes et vidéos enregistrées</p>
+        </div>
+    </div>
+
+    <div class="toolbar">
+        <form method="get" action="{{ url_for('main.events') }}" class="filter-form">
+            <select name="kind" class="filter-select">
+                <option value="" {% if not selected_kind %}selected{% endif %}>Tous les évènements</option>
+                <option value="detection" {% if selected_kind == 'detection' %}selected{% endif %}>Détection</option>
+                <option value="alarme" {% if selected_kind == 'alarme' %}selected{% endif %}>Alarme</option>
+                <option value="video_recorded" {% if selected_kind == 'video_recorded' %}selected{% endif %}>Vidéo enregistrée</option>
+            </select>
+
+            <button type="submit" class="filter-btn">Filtrer</button>
+            <a href="{{ url_for('main.events') }}" class="reset-btn">Réinitialiser</a>
+        </form>
+    </div>
+
+    <div class="table-wrapper">
+        <table class="custom-table">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Date / Heure</th>
+                    <th>Type</th>
+                    <th>Capture</th>
+                    <th>Vidéo</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% if events %}
+                    {% for event in events %}
+                    <tr>
+                        <td class="col-id">{{ event.id }}</td>
+                        <td class="col-date">
+                            {{ event.created_at.strftime('%d/%m/%Y %H:%M:%S') if event.created_at else '-' }}
+                        </td>
+                        <td>
+                            {% if event.kind == 'detection' %}
+                                <span class="badge badge-detection">Détection</span>
+                            {% elif event.kind == 'alerte' %}
+                                <span class="badge badge-alarme">Alerte</span>
+                            {% elif event.kind == 'video_recorded' %}
+                                <span class="badge badge-video">Vidéo</span>
+                            {% else %}
+                                <span class="badge badge-default">{{ event.kind or 'Inconnu' }}</span>
+                            {% endif %}
+                        </td>
+                        <td class="path-cell">
+                            {% if event.screenshot_path %}
+                                {{ event.screenshot_path }}
+                            {% else %}
+                                <span class="muted-value">Aucune capture</span>
+                            {% endif %}
+                        </td>
+                        <td class="path-cell">
+                            {% if event.video_path %}
+                                {{ event.video_path }}
+                            {% else %}
+                                <span class="muted-value">Aucune vidéo</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <div class="actions-cell">
+                                {% if event.video_path %}
+                                    <a class="video-link" href="{{ url_for('main.download', event_id=event.id) }}">
+                                        Télécharger
+                                    </a>
+                                {% endif %}
+
+                                <form method="post"
+                                      action="{{ url_for('main.delete_event', event_id=event.id) }}"
+                                      onsubmit="return confirm('Supprimer cet évènement ?');"
+                                      style="margin: 0;">
+                                    <button type="submit" class="delete-btn">
+                                        Supprimer
+                                    </button>
+                                </form>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                {% else %}
+                    <tr>
+                        <td colspan="6" class="empty-state">Aucun évènement enregistré.</td>
+                    </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
