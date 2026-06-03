@@ -76,6 +76,8 @@
 
                     <td>
                         {% if user.id != current_user.id %}
+                            <!-- JavaScript simple : confirm() demande une validation avant de supprimer un compte utilisateur. -->
+                            <!-- Si l'administrateur clique sur Annuler, le formulaire POST n'est pas envoyé. -->
                             <form method="POST" action="{{ url_for('main.admin_delete_user', user_id=user.id) }}" onsubmit="return confirm('Supprimer cet utilisateur ?');">
                                 <button type="submit">
                                     Supprimer
