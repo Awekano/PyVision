@@ -34,72 +34,106 @@
 </div>
 
 <script>
+  // Récupération des boutons permettant de changer de mode d'affichage.
   const normalModeBtn = document.getElementById("normalModeBtn");
   const demoModeBtn = document.getElementById("demoModeBtn");
+
+  // Zone de texte utilisée pour afficher l'état actuel du live à l'utilisateur.
   const liveStatus = document.getElementById("liveStatus");
 
+  // Récupération des blocs HTML utilisés pour le flux serveur et la webcam locale.
   const serverLiveBox = document.getElementById("serverLiveBox");
   const demoLiveBox = document.getElementById("demoLiveBox");
   const demoVideo = document.getElementById("demoVideo");
+
+  // Le canvas sert à lire les images de la webcam pour comparer les pixels entre deux frames.
   const motionCanvas = document.getElementById("motionCanvas");
   const ctx = motionCanvas.getContext("2d", { willReadFrequently: true });
 
+  // Flux vidéo de la webcam locale.
   let mediaStream = null;
+
+  // Objet JavaScript utilisé pour enregistrer la vidéo de la webcam.
   let mediaRecorder = null;
+
+  // Tableau qui stocke les morceaux vidéo générés pendant l'enregistrement.
   let recordedChunks = [];
+
+  // Image précédente utilisée pour comparer les pixels avec l'image actuelle.
   let previousFrame = null;
+
+  // Intervalle de détection lancé toutes les 250 ms.
   let motionInterval = null;
+
+  // Empêche de lancer plusieurs enregistrements en même temps.
   let isRecording = false;
+
+  // Pause courte après une détection pour éviter de déclencher plusieurs vidéos d'affilée.
   let motionCooldown = false;
 
-  const MOTION_THRESHOLD = 18;      // sensibilité pixel
-  const MOTION_PIXELS_MIN = 3500;   // nombre mini de pixels différents
+  // Seuil de différence de couleur entre deux pixels pour considérer qu'il y a un changement.
+  const MOTION_THRESHOLD = 18;
+
+  // Nombre minimum de pixels modifiés avant de considérer qu'un mouvement est détecté.
+  const MOTION_PIXELS_MIN = 3500;
 
   function setNormalMode() {
+    // Affiche le flux caméra envoyé par le serveur Flask.
     serverLiveBox.style.display = "block";
     demoLiveBox.style.display = "none";
     liveStatus.textContent = "Mode actuel : normal";
 
+    // Coupe la webcam locale si le mode démo était actif.
     stopDemoMode();
   }
 
   function stopDemoMode() {
+    // Arrête la boucle de détection de mouvement.
     if (motionInterval) {
       clearInterval(motionInterval);
       motionInterval = null;
     }
 
+    // Réinitialise la dernière image analysée.
     previousFrame = null;
 
+    // Coupe tous les flux de la webcam pour libérer la caméra du navigateur.
     if (mediaStream) {
       mediaStream.getTracks().forEach(track => track.stop());
       mediaStream = null;
     }
 
+    // Retire le flux vidéo de la balise <video>.
     demoVideo.srcObject = null;
   }
 
   async function setDemoMode() {
     try {
       liveStatus.textContent = "Demande d'accès à la webcam...";
+
+      // Demande l'autorisation au navigateur d'utiliser la webcam sans le micro.
       mediaStream = await navigator.mediaDevices.getUserMedia({
         video: true,
         audio: false
       });
 
+      // Affiche le flux de la webcam dans la page.
       demoVideo.srcObject = mediaStream;
       serverLiveBox.style.display = "none";
       demoLiveBox.style.display = "block";
       liveStatus.textContent = "Mode actuel : démo webcam avec détection de mouvement";
 
+      // Lance l'analyse automatique des images de la webcam.
       startMotionDetection();
     } catch (err) {
+      // Affiche une erreur si l'utilisateur refuse la webcam ou si le navigateur bloque l'accès.
       console.error(err);
       liveStatus.textContent = "Impossible d'accéder à la webcam.";
     }
   }
 
   function pickMimeType() {
+    // Liste des formats vidéo testés, du plus recommandé au plus simple.
     const candidates = [
       "video/webm;codecs=vp9,opus",
       "video/webm;codecs=vp8,opus",
@@ -107,27 +141,39 @@
       "video/mp4"
     ];
 
+    // Retourne le premier format compatible avec le navigateur.
     for (const type of candidates) {
       if (window.MediaRecorder && MediaRecorder.isTypeSupported(type)) {
         return type;
       }
     }
+
+    // Si aucun format précis n'est compatible, le navigateur choisira le format par défaut.
     return "";
   }
 
   function startMotionDetection() {
+    // Évite de créer plusieurs boucles de détection en même temps.
     if (motionInterval) {
       clearInterval(motionInterval);
     }
 
+    // Analyse une image de la webcam toutes les 250 ms.
     motionInterval = setInterval(() => {
+      // Attend que la vidéo soit réellement chargée avant d'analyser les pixels.
       if (!demoVideo.videoWidth || !demoVideo.videoHeight) return;
+
+      // Ne détecte pas de nouveau mouvement pendant un enregistrement ou pendant le délai de pause.
       if (isRecording || motionCooldown) return;
 
+      // Dessine l'image actuelle de la webcam dans le canvas invisible.
       ctx.drawImage(demoVideo, 0, 0, motionCanvas.width, motionCanvas.height);
+
+      // Récupère les pixels de l'image actuelle.
       const frame = ctx.getImageData(0, 0, motionCanvas.width, motionCanvas.height);
       const data = frame.data;
 
+      // Au premier passage, on garde simplement l'image comme référence.
       if (!previousFrame) {
         previousFrame = new Uint8ClampedArray(data);
         return;
@@ -135,18 +181,23 @@
 
       let changedPixels = 0;
 
+      // Compare les pixels de l'image actuelle avec ceux de l'image précédente.
+      // Les pixels sont parcourus par groupe de 4 valeurs : rouge, vert, bleu, alpha.
       for (let i = 0; i < data.length; i += 4) {
         const dr = Math.abs(data[i] - previousFrame[i]);
         const dg = Math.abs(data[i + 1] - previousFrame[i + 1]);
         const db = Math.abs(data[i + 2] - previousFrame[i + 2]);
 
+        // Si l'écart de couleur est supérieur au seuil, le pixel est considéré comme modifié.
         if ((dr + dg + db) > MOTION_THRESHOLD) {
           changedPixels++;
         }
       }
 
+      // L'image actuelle devient la référence pour la prochaine comparaison.
       previousFrame = new Uint8ClampedArray(data);
 
+      // Si assez de pixels ont changé, un mouvement est détecté et l'enregistrement démarre.
       if (changedPixels > MOTION_PIXELS_MIN) {
         liveStatus.textContent = "Mouvement détecté : enregistrement 10 secondes...";
         startAutoRecording();
@@ -155,33 +206,39 @@
   }
 
   async function uploadRecordedBlob(videoBlob, ext) {
-  if (!videoBlob) {
-    throw new Error("Blob vidéo introuvable");
+    // Vérifie qu'une vidéo a bien été créée avant l'envoi au serveur.
+    if (!videoBlob) {
+      throw new Error("Blob vidéo introuvable");
+    }
+
+    // FormData permet d'envoyer un fichier vidéo avec une requête HTTP POST.
+    const formData = new FormData();
+    formData.append("video", videoBlob, `motion_demo_${Date.now()}.${ext}`);
+
+    // Envoie la vidéo enregistrée vers la route Flask chargée de sauvegarder le fichier.
+    const response = await fetch("/upload_webcam_recording", {
+      method: "POST",
+      body: formData
+    });
+
+    let data = {};
+    try {
+      // Le serveur doit répondre avec du JSON contenant le résultat de l'upload.
+      data = await response.json();
+    } catch (e) {
+      throw new Error("Réponse JSON invalide du serveur");
+    }
+
+    // Si le serveur renvoie une erreur HTTP, on remonte le message d'erreur.
+    if (!response.ok) {
+      throw new Error(data.error || "Erreur d'upload");
+    }
+
+    return data;
   }
-
-  const formData = new FormData();
-  formData.append("video", videoBlob, `motion_demo_${Date.now()}.${ext}`);
-
-  const response = await fetch("/upload_webcam_recording", {
-    method: "POST",
-    body: formData
-  });
-
-  let data = {};
-  try {
-    data = await response.json();
-  } catch (e) {
-    throw new Error("Réponse JSON invalide du serveur");
-  }
-
-  if (!response.ok) {
-    throw new Error(data.error || "Erreur d'upload");
-  }
-
-  return data;
-}	
 
   function startAutoRecording() {
+    // Ne démarre pas l'enregistrement si la webcam n'est pas active ou si un enregistrement existe déjà.
     if (!mediaStream || isRecording) return;
 
     isRecording = true;
@@ -189,49 +246,62 @@
     recordedChunks = [];
 
     try {
+      // Sélectionne le meilleur format vidéo compatible avec le navigateur.
       const mimeType = pickMimeType();
       mediaRecorder = mimeType
         ? new MediaRecorder(mediaStream, { mimeType })
         : new MediaRecorder(mediaStream);
 
+      // À chaque morceau vidéo disponible, on l'ajoute au tableau recordedChunks.
       mediaRecorder.ondataavailable = (event) => {
         if (event.data && event.data.size > 0) {
           recordedChunks.push(event.data);
         }
       };
 
+      // Cette fonction est exécutée quand l'enregistrement s'arrête.
       mediaRecorder.onstop = async () => {
-  try {
-    if (!recordedChunks || recordedChunks.length === 0) {
-      throw new Error("Aucune donnée vidéo enregistrée");
-    }
+        try {
+          // Vérifie qu'au moins un morceau vidéo a été enregistré.
+          if (!recordedChunks || recordedChunks.length === 0) {
+            throw new Error("Aucune donnée vidéo enregistrée");
+          }
 
-    const finalType = mediaRecorder.mimeType || "video/webm";
-    const ext = finalType.includes("mp4") ? "mp4" : "webm";
-    const videoBlob = new Blob(recordedChunks, { type: finalType });
+          // Détermine l'extension du fichier selon le format vidéo utilisé.
+          const finalType = mediaRecorder.mimeType || "video/webm";
+          const ext = finalType.includes("mp4") ? "mp4" : "webm";
 
-    liveStatus.textContent = "Envoi de la vidéo au serveur...";
-    const result = await uploadRecordedBlob(videoBlob, ext);
+          // Assemble tous les morceaux vidéo dans un seul fichier Blob.
+          const videoBlob = new Blob(recordedChunks, { type: finalType });
 
-    console.log("Upload OK :", result);
-    liveStatus.textContent = result.message
-      ? `${result.message} : ${result.filename || ""}`
-      : `Vidéo enregistrée : ${result.filename || ""}`;
-  } catch (err) {
-    console.error("Erreur upload :", err);
-    liveStatus.textContent = `Échec de l'envoi au serveur : ${err.message || err}`;
-  } finally {
-    isRecording = false;
+          // Envoie la vidéo au serveur Flask.
+          liveStatus.textContent = "Envoi de la vidéo au serveur...";
+          const result = await uploadRecordedBlob(videoBlob, ext);
 
-    setTimeout(() => {
-      motionCooldown = false;
-      liveStatus.textContent = "Mode démo actif : surveillance de mouvement";
-    }, 3000);
-  }
-};
+          console.log("Upload OK :", result);
+          liveStatus.textContent = result.message
+            ? `${result.message} : ${result.filename || ""}`
+            : `Vidéo enregistrée : ${result.filename || ""}`;
+        } catch (err) {
+          // Affiche une erreur si l'assemblage ou l'envoi de la vidéo échoue.
+          console.error("Erreur upload :", err);
+          liveStatus.textContent = `Échec de l'envoi au serveur : ${err.message || err}`;
+        } finally {
+          // Autorise une nouvelle détection après la fin de l'enregistrement.
+          isRecording = false;
 
+          // Attend 3 secondes avant de relancer la détection pour éviter les déclenchements répétés.
+          setTimeout(() => {
+            motionCooldown = false;
+            liveStatus.textContent = "Mode démo actif : surveillance de mouvement";
+          }, 3000);
+        }
+      };
+
+      // Démarre l'enregistrement vidéo.
       mediaRecorder.start();
 
+      // Arrête automatiquement l'enregistrement au bout de 10 secondes.
       setTimeout(() => {
         if (mediaRecorder && mediaRecorder.state !== "inactive") {
           mediaRecorder.stop();
@@ -239,6 +309,7 @@
       }, 10000);
 
     } catch (err) {
+      // Gestion des erreurs si le navigateur ne peut pas démarrer MediaRecorder.
       console.error(err);
       isRecording = false;
       motionCooldown = false;
@@ -246,6 +317,7 @@
     }
   }
 
+  // Association des boutons HTML avec les fonctions JavaScript correspondantes.
   normalModeBtn.addEventListener("click", setNormalMode);
   demoModeBtn.addEventListener("click", setDemoMode);
 </script>
