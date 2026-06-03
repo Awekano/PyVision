@@ -315,6 +315,8 @@
                                     </a>
                                 {% endif %}
 
+                                <!-- JavaScript simple : confirm() affiche une fenêtre de confirmation avant la suppression de l'évènement. -->
+                                <!-- Si l'utilisateur clique sur Annuler, return false empêche l'envoi du formulaire POST. -->
                                 <form method="post"
                                       action="{{ url_for('main.delete_event', event_id=event.id) }}"
                                       onsubmit="return confirm('Supprimer cet évènement ?');"
