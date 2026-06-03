@@ -1,3 +1,7 @@
+# app/routes_main.py
+# Ce fichier contient les routes principales du site PyVision
+# Il gère l'accueil, les événements, le live, les enregistrements et l'administration
+
 import mimetypes
 import os
 import time as time_module
@@ -30,61 +34,91 @@ from app.services.alert_settings import is_alert_allowed
 from app.services.audit import audit
 from mailer import send_alert_email
 
+# Création du blueprint principal
 main_bp = Blueprint("main", __name__)
 
+# Extensions vidéo autorisées dans le projet
 VIDEO_EXT = {".mp4", ".mkv", ".webm", ".avi", ".mov"}
+
+# Extensions qui peuvent être affichées directement dans le navigateur
 INLINE_VIDEO_EXT = {".mp4", ".mkv", ".webm", ".mov"}
+
+# Extensions acceptées lors de l'envoi d'une vidéo depuis la webcam
 UPLOAD_EXT = {".webm", ".mp4", ".mkv"}
 
 
 @main_bp.get("/")
 @login_required
 def index():
+    # Affiche la page d'accueil après connexion
     return render_template("index.html")
 
 
 @main_bp.get("/events")
 @login_required
 def events():
+    # Récupère le type d'événement demandé dans l'URL
     kind = request.args.get("kind")
+
+    # Prépare la requête des événements, du plus récent au plus ancien
     q = Event.query.order_by(Event.created_at.desc())
 
+    # Applique un filtre si le type d'événement est valide
     if kind in ("detection", "alarme", "alerte", "alert", "video_recorded"):
         q = q.filter_by(kind=kind)
 
+    # Limite l'affichage aux 200 derniers événements
     rows = q.limit(200).all()
+
+    # Ajoute l'action dans le journal de bord
     audit("view_events", username=current_user.username)
 
+    # Affiche la page des événements
     return render_template("events.html", events=rows, selected_kind=kind)
 
 
 @main_bp.get("/audit")
 @login_required
 def audit_logs():
+    # Seuls les administrateurs peuvent consulter le journal de bord
     if getattr(current_user, "role", None) != "admin":
         abort(403)
 
+    # Récupère les 200 dernières actions
     rows = AuditLog.query.order_by(AuditLog.created_at.desc()).limit(200).all()
+
+    # Ajoute l'action dans le journal de bord
     audit("view_audit", username=current_user.username)
+
+    # Affiche la page d'audit
     return render_template("audit.html", audits=rows)
 
 
 @main_bp.get("/live")
 @login_required
 def live():
+    # Ajoute l'accès au live dans le journal de bord
     audit("view_live", username=current_user.username)
+
+    # Affiche la page du live caméra
     return render_template("live.html")
 
 
 @main_bp.get("/live_feed")
 @login_required
 def live_feed():
+    # Récupère l'URL RTSP de la caméra depuis la configuration
     rtsp_url = current_app.config.get("RTSP_URL")
+
+    # Si aucune caméra n'est configurée, retourne une erreur
     if not rtsp_url:
         audit("live_feed_missing_rtsp_url", username=current_user.username)
         return Response("RTSP_URL non configurée", status=500, mimetype="text/plain")
 
+    # Ajoute l'ouverture du flux dans le journal de bord
     audit("open_live_feed", username=current_user.username)
+
+    # Retourne le flux vidéo au format MJPEG
     return Response(
         stream_with_context(_mjpeg_stream(rtsp_url)),
         mimetype="multipart/x-mixed-replace; boundary=frame",
@@ -98,38 +132,50 @@ def live_feed():
 @main_bp.get("/download/<int:event_id>")
 @login_required
 def download(event_id: int):
+    # Récupère l'événement demandé ou retourne une erreur 404
     ev = Event.query.get_or_404(event_id)
 
+    # Si aucun fichier vidéo n'est associé, retourne une erreur
     if not ev.video_path:
         abort(404)
 
+    # Récupère le dossier des enregistrements
     base_dir = _recordings_dir()
 
+    # Construit le chemin absolu de la vidéo
     if os.path.isabs(ev.video_path):
         abs_path = os.path.abspath(ev.video_path)
     else:
         abs_path = os.path.abspath(os.path.join(base_dir, ev.video_path))
 
+    # Sécurité : empêche de sortir du dossier recordings
     if not abs_path.startswith(base_dir + os.sep):
         abort(403)
 
+    # Vérifie que le fichier existe
     if not os.path.isfile(abs_path):
         abort(404)
 
+    # Ajoute le téléchargement dans le journal de bord
     audit(f"download_video:{event_id}", username=current_user.username)
+
+    # Envoie le fichier en téléchargement
     return send_file(abs_path, as_attachment=True, conditional=True)
 
 
 def _recordings_dir() -> str:
+    # Retourne le chemin absolu du dossier recordings
     return os.path.abspath(os.path.join(current_app.root_path, "..", "recordings"))
 
 
 @main_bp.get("/recordings")
 @login_required
 def recordings():
+    # Récupère le dossier des enregistrements
     base_dir = _recordings_dir()
     rows = []
 
+    # Si le dossier recordings n'existe pas, affiche une erreur propre
     if not os.path.isdir(base_dir):
         audit(
             "view_recordings_folder_missing",
@@ -142,19 +188,27 @@ def recordings():
             error=f"Dossier introuvable : {base_dir}",
         )
 
+    # Parcours des fichiers dans le dossier recordings
     for root, _, files in os.walk(base_dir):
         for name in files:
             ext = os.path.splitext(name)[1].lower()
+
+            # Ignore les fichiers qui ne sont pas des vidéos
             if ext not in VIDEO_EXT:
                 continue
 
+            # Création du chemin absolu du fichier
             abs_path = os.path.abspath(os.path.join(root, name))
+
+            # Sécurité : empêche de sortir du dossier recordings
             if not abs_path.startswith(base_dir + os.sep):
                 continue
 
+            # Récupération des informations du fichier
             st = os.stat(abs_path)
             rel_path = os.path.relpath(abs_path, base_dir).replace("\\", "/")
 
+            # Ajout de la vidéo dans la liste affichée
             rows.append(
                 {
                     "rel_path": rel_path,
@@ -167,37 +221,50 @@ def recordings():
                 }
             )
 
+    # Trie les vidéos de la plus récente à la plus ancienne
     rows.sort(key=lambda r: r["dt"], reverse=True)
+
+    # Ajoute l'action dans le journal de bord
     audit(
         "view_recordings_folder",
         username=current_user.username,
         extra={"count": len(rows)},
     )
+
+    # Affiche la page des enregistrements
     return render_template("recordings.html", rows=rows, error=None)
 
 
 @main_bp.get("/recordings/view/<path:rel_path>")
 @login_required
 def recordings_view(rel_path: str):
+    # Récupère le chemin absolu du fichier demandé
     base_dir = _recordings_dir()
     abs_path = os.path.abspath(os.path.join(base_dir, rel_path))
 
+    # Sécurité : empêche de lire un fichier en dehors de recordings
     if not abs_path.startswith(base_dir + os.sep):
         abort(403)
 
+    # Vérifie que le fichier existe
     if not os.path.isfile(abs_path):
         abort(404)
 
+    # Détermine le type MIME du fichier
     ext = os.path.splitext(abs_path)[1].lower()
     guessed_mime = mimetypes.guess_type(abs_path)[0] or "application/octet-stream"
+
+    # Indique si la vidéo peut être ouverte directement dans le navigateur
     inline = ext in INLINE_VIDEO_EXT
 
+    # Ajoute la consultation dans le journal de bord
     audit(
         "view_recording_file",
         username=current_user.username,
         extra={"file": rel_path},
     )
 
+    # Envoie la vidéo au navigateur
     return send_file(
         abs_path,
         mimetype=guessed_mime,
@@ -212,36 +279,51 @@ def recordings_view(rel_path: str):
 @main_bp.get("/recordings/download/<path:rel_path>")
 @login_required
 def recordings_download(rel_path: str):
+    # Récupère le chemin absolu du fichier demandé
     base_dir = _recordings_dir()
     abs_path = os.path.abspath(os.path.join(base_dir, rel_path))
 
+    # Sécurité : empêche de télécharger un fichier en dehors de recordings
     if not abs_path.startswith(base_dir + os.sep):
         abort(403)
 
+    # Vérifie que le fichier existe
     if not os.path.isfile(abs_path):
         abort(404)
 
+    # Ajoute le téléchargement dans le journal de bord
     audit(
         "download_recording_file",
         username=current_user.username,
         extra={"file": rel_path},
     )
+
+    # Envoie le fichier en téléchargement
     return send_file(abs_path, as_attachment=True, conditional=True)
 
 
 def _mjpeg_stream(rtsp_url: str):
+    # Récupère le mode de transport RTSP
     transport = current_app.config.get("RTSP_TRANSPORT", "tcp").lower()
+
+    # Récupère la qualité JPEG configurée
     jpeg_quality = int(current_app.config.get("MJPEG_QUALITY", 80))
 
+    # Prépare les options OpenCV pour le flux RTSP
     options = []
+
+    # Force le transport TCP si configuré
     if transport == "tcp":
         options.append("rtsp_transport;tcp")
 
+    # Ajoute les options dans les variables d'environnement OpenCV
     if options:
         os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "|".join(options)
 
+    # Ouverture du flux vidéo RTSP
     cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
 
+    # Si le flux est inaccessible, affiche une image d'erreur
     if not cap.isOpened():
         yield (
             b"--frame\r\n"
@@ -251,19 +333,27 @@ def _mjpeg_stream(rtsp_url: str):
         )
         return
 
+    # Paramètre de qualité JPEG
     encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), jpeg_quality]
 
     try:
+        # Boucle de lecture du flux caméra
         while True:
             ok, frame = cap.read()
+
+            # Si aucune image n'est lue, attend un peu puis recommence
             if not ok or frame is None:
                 time_module.sleep(0.2)
                 continue
 
+            # Encode l'image en JPEG
             success, buffer = cv2.imencode(".jpg", frame, encode_params)
+
+            # Si l'encodage échoue, on ignore l'image
             if not success:
                 continue
 
+            # Envoie l'image au navigateur au format MJPEG
             yield (
                 b"--frame\r\n"
                 b"Content-Type: image/jpeg\r\n\r\n"
@@ -271,13 +361,18 @@ def _mjpeg_stream(rtsp_url: str):
                 + b"\r\n"
             )
     finally:
+        # Ferme proprement le flux caméra
         cap.release()
 
 
 def _error_frame(text_value: str) -> bytes:
+    # Cette fonction crée une image noire avec un message d'erreur
     import numpy as np
 
+    # Création d'une image noire
     frame = np.zeros((480, 854, 3), dtype=np.uint8)
+
+    # Ajout du texte sur l'image
     cv2.putText(
         frame,
         text_value,
@@ -288,51 +383,74 @@ def _error_frame(text_value: str) -> bytes:
         2,
         cv2.LINE_AA,
     )
+
+    # Encodage de l'image en JPEG
     ok, buffer = cv2.imencode(".jpg", frame)
+
+    # Retourne l'image encodée
     return buffer.tobytes() if ok else b""
 
 
 @main_bp.post("/upload_webcam_recording")
 @login_required
 def upload_webcam_recording():
+    # Cette route reçoit une vidéo envoyée par le mode webcam démo
     try:
+        # Récupère le fichier vidéo envoyé par le navigateur
         file = request.files.get("video")
 
+        # Vérifie qu'un fichier a bien été reçu
         if not file:
             return jsonify({"error": "Aucun fichier reçu"}), 400
 
+        # Sécurise le nom original du fichier
         original_name = secure_filename(file.filename or "")
+
+        # Récupère l'extension du fichier
         ext = Path(original_name).suffix.lower()
 
+        # Vérifie que l'extension est autorisée
         if ext not in UPLOAD_EXT:
             return jsonify({"error": f"Extension non autorisée : {ext}"}), 400
 
+        # Crée le dossier recordings si besoin
         recordings_dir = _recordings_dir()
         os.makedirs(recordings_dir, exist_ok=True)
 
+        # Génère un nom de fichier unique avec la date et l'utilisateur
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"motion_demo_{current_user.username}_{timestamp}{ext}"
         save_path = os.path.join(recordings_dir, filename)
 
+        # Sauvegarde la vidéo sur le serveur
         file.save(save_path)
 
+        # Chemin relatif stocké dans la base
         rel_path = filename
+
+        # Vérifie si l'alerte mail doit être envoyée
         is_alert = is_alert_allowed()
+
+        # Définit le type d'événement selon la plage horaire
         event_kind = "alerte" if is_alert else "video_recorded"
+
+        # Description affichée dans la base
         description = "Alerte mail envoyée" if is_alert else "Vidéo enregistrée"
 
-        # Le modèle Event de ton projet ne déclare pas toutes les colonnes SQL
-        # présentes dans MariaDB. On crée donc l'évènement avec les colonnes du
-        # modèle, puis on met à jour les colonnes SQL supplémentaires en requête brute.
+        # Création de l'événement avec les colonnes du modèle SQLAlchemy
         event = Event(
             kind=event_kind,
             video_path=rel_path,
             screenshot_path=None,
         )
 
+        # Ajout de l'événement dans la session
         db.session.add(event)
+
+        # Flush pour récupérer l'ID avant le commit
         db.session.flush()
 
+        # Mise à jour des colonnes supplémentaires de la table events
         db.session.execute(
             text(
                 """
@@ -361,8 +479,10 @@ def upload_webcam_recording():
             },
         )
 
+        # Validation en base de données
         db.session.commit()
 
+        # Envoi du mail si l'événement est une alerte
         if is_alert:
             try:
                 send_alert_email(rel_path, "alerte")
@@ -373,6 +493,7 @@ def upload_webcam_recording():
                 "Alerte mail non envoyée : hors plage horaire ou désactivée"
             )
 
+        # Ajout de l'action dans le journal de bord
         try:
             audit(
                 "upload_webcam_recording",
@@ -382,6 +503,7 @@ def upload_webcam_recording():
         except Exception as audit_error:
             current_app.logger.error(f"Erreur audit upload_webcam_recording: {audit_error}")
 
+        # Réponse JSON envoyée au navigateur
         return jsonify(
             {
                 "message": "Vidéo enregistrée",
@@ -392,49 +514,73 @@ def upload_webcam_recording():
         ), 201
 
     except Exception as e:
+        # Annule les changements en base en cas d'erreur
         db.session.rollback()
+
+        # Log de l'erreur
         current_app.logger.exception("Erreur upload_webcam_recording")
+
+        # Retourne l'erreur au navigateur
         return jsonify({"error": str(e)}), 500
 
 
 @main_bp.post("/events/delete/<int:event_id>")
 @login_required
 def delete_event(event_id):
+    # Cette route supprime un événement et sa vidéo associée
     try:
+        # Récupère l'événement ou retourne une erreur 404
         event = Event.query.get_or_404(event_id)
 
+        # Si une vidéo est associée à l'événement
         if event.video_path:
             base_dir = _recordings_dir()
             abs_path = os.path.abspath(os.path.join(base_dir, event.video_path))
 
+            # Supprime la vidéo uniquement si elle est dans le dossier recordings
             if abs_path.startswith(base_dir + os.sep) and os.path.exists(abs_path):
                 os.remove(abs_path)
 
+        # Supprime l'événement de la base
         db.session.delete(event)
+
+        # Valide la suppression
         db.session.commit()
 
+        # Ajoute la suppression dans le journal de bord
         try:
             audit("delete_event", username=current_user.username)
         except Exception as audit_error:
             current_app.logger.error(f"Erreur audit delete_event: {audit_error}")
 
+        # Retourne à la page événements
         return redirect(url_for("main.events"))
 
     except Exception as e:
+        # Annule la suppression en cas d'erreur
         db.session.rollback()
+
+        # Log de l'erreur
         current_app.logger.exception("Erreur delete_event")
+
+        # Affiche l'erreur
         return f"Erreur suppression : {e}", 500
 
 
 @main_bp.route("/admin/alert-settings", methods=["GET", "POST"])
 @login_required
 def alert_settings():
+    # Cette page permet à l'admin de configurer les horaires d'alerte mail
+
+    # Vérifie que l'utilisateur est administrateur
     if getattr(current_user, "role", None) != "admin":
         flash("Accès refusé", "danger")
         return redirect(url_for("main.index"))
 
+    # Récupère les paramètres existants
     settings = AlertSettings.query.first()
 
+    # Crée des paramètres par défaut s'ils n'existent pas
     if not settings:
         settings = AlertSettings(
             enabled=True,
@@ -444,29 +590,46 @@ def alert_settings():
         db.session.add(settings)
         db.session.commit()
 
+    # Si le formulaire est envoyé
     if request.method == "POST":
+        # Active ou désactive l'alerte
         settings.enabled = request.form.get("enabled") == "on"
+
+        # Met à jour l'heure de début
         settings.start_time = dt_time.fromisoformat(request.form.get("start_time"))
+
+        # Met à jour l'heure de fin
         settings.end_time = dt_time.fromisoformat(request.form.get("end_time"))
 
+        # Enregistre les paramètres
         db.session.commit()
+
+        # Message de confirmation
         flash("Paramètres d'alerte mis à jour", "success")
+
+        # Recharge la page
         return redirect(url_for("main.alert_settings"))
 
+    # Affiche la page des paramètres
     return render_template("alert_settings.html", settings=settings)
+
 
 @main_bp.route("/mindview")
 def mindview():
+    # Affiche la page de téléchargement du Gantt MindView
     return render_template("mindview.html")
 
 
 @main_bp.route("/mindview/download")
 def download_mindview():
+    # Chemin du fichier MindView sur le serveur
     file_path = "/home/enzo/eryma_web/app/static/downloads/PyVision_gantt.mvdx"
 
+    # Vérifie que le fichier existe
     if not os.path.isfile(file_path):
         return f"Fichier introuvable : {file_path}", 404
 
+    # Envoie le fichier en téléchargement
     return send_file(
         file_path,
         as_attachment=True,
