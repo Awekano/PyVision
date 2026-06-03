@@ -29,6 +29,7 @@
           <a class="topnav__link" href="{{ url_for('main.events') }}">Événements</a>
 {% if current_user.is_authenticated and current_user.role == "admin" %}
   <a class="topnav__link" href="{{ url_for('main.alert_settings') }}">Alertes mail</a>
+  <a class="topnav__link" href="{{ url_for('main.admin_users') }}">Utilisateurs</a>
 {% endif %}
           <form method="post" action="{{ url_for('auth.logout') }}" class="inline">
             <button class="btn btn--ghost" type="submit">Déconnexion</button>

@@ -21,8 +21,11 @@ class User(UserMixin, db.Model):
     # Mot de passe hashé
     password_hash = db.Column(db.String(255), nullable=False)
 
-    # Rôle de l'utilisateur : client ou admin
-    role = db.Column(db.String(20), default="client")
+    # Rôle de l'utilisateur : user ou admin
+    role = db.Column(db.String(20), default="user", nullable=False)
+
+    # Permet de désactiver un compte sans le supprimer définitivement
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
 
     def set_password(self, raw_password: str) -> None:
         # Hash le mot de passe avant de l'enregistrer
@@ -32,6 +35,9 @@ class User(UserMixin, db.Model):
         # Vérifie si le mot de passe donné correspond au hash enregistré
         return check_password_hash(self.password_hash, raw_password)
 
+    def is_admin(self) -> bool:
+        # Retourne True si l'utilisateur est administrateur
+        return self.role == "admin"
 
 class Event(db.Model):
     # Table des événements caméra

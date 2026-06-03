@@ -29,10 +29,11 @@ from sqlalchemy import text
 from werkzeug.utils import secure_filename
 
 from app import db
-from app.models import AlertSettings, AuditLog, Event
+from app.models import AlertSettings, AuditLog, Event, User
 from app.services.alert_settings import is_alert_allowed
 from app.services.audit import audit
 from mailer import send_alert_email
+from functools import wraps
 
 # Création du blueprint principal
 main_bp = Blueprint("main", __name__)
@@ -46,6 +47,14 @@ INLINE_VIDEO_EXT = {".mp4", ".mkv", ".webm", ".mov"}
 # Extensions acceptées lors de l'envoi d'une vidéo depuis la webcam
 UPLOAD_EXT = {".webm", ".mp4", ".mkv"}
 
+def admin_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        # Bloque l'accès si l'utilisateur n'est pas administrateur
+        if not current_user.is_authenticated or not current_user.is_admin():
+            abort(403)
+        return f(*args, **kwargs)
+    return decorated_function
 
 @main_bp.get("/")
 @login_required
@@ -636,3 +645,68 @@ def download_mindview():
         download_name="PyVision_gantt.mvdx",
         mimetype="application/octet-stream"
     )
+@main_bp.route("/admin/users")
+@login_required
+@admin_required
+def admin_users():
+    # Affiche la liste des utilisateurs
+    users = User.query.order_by(User.id.asc()).all()
+    return render_template("admin_users.html", users=users)
+
+
+@main_bp.route("/admin/users/add", methods=["POST"])
+@login_required
+@admin_required
+def admin_add_user():
+    # Récupère les champs du formulaire
+    username = request.form.get("username", "").strip()
+    password = request.form.get("password", "").strip()
+    is_admin = request.form.get("is_admin") == "on"
+
+    # Vérifie que les champs obligatoires sont remplis
+    if not username or not password:
+        flash("Le nom d'utilisateur et le mot de passe sont obligatoires", "error")
+        return redirect(url_for("main.admin_users"))
+
+    # Vérifie si le nom d'utilisateur existe déjà
+    existing_user = User.query.filter_by(username=username).first()
+    if existing_user:
+        flash("Cet utilisateur existe déjà", "error")
+        return redirect(url_for("main.admin_users"))
+
+    # Crée le nouvel utilisateur
+    new_user = User(
+        username=username,
+        role="admin" if is_admin else "user",
+        is_active=True
+    )
+
+    # Hash le mot de passe avant l'enregistrement
+    new_user.set_password(password)
+
+    # Enregistre dans la base de données
+    db.session.add(new_user)
+    db.session.commit()
+
+    flash("Utilisateur ajouté avec succès", "success")
+    return redirect(url_for("main.admin_users"))
+
+
+@main_bp.route("/admin/users/<int:user_id>/delete", methods=["POST"])
+@login_required
+@admin_required
+def admin_delete_user(user_id):
+    # Récupère l'utilisateur demandé
+    user = User.query.get_or_404(user_id)
+
+    # Empêche l'admin connecté de supprimer son propre compte
+    if user.id == current_user.id:
+        flash("Vous ne pouvez pas supprimer votre propre compte", "error")
+        return redirect(url_for("main.admin_users"))
+
+    # Supprime le compte utilisateur
+    db.session.delete(user)
+    db.session.commit()
+
+    flash("Utilisateur supprimé avec succès", "success")
+    return redirect(url_for("main.admin_users"))
