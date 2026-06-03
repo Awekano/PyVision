@@ -399,6 +399,73 @@ def _error_frame(text_value: str) -> bytes:
     # Retourne l'image encodée
     return buffer.tobytes() if ok else b""
 
+@main_bp.post("/recordings/delete/<path:rel_path>")
+@login_required
+def recordings_delete(rel_path: str):
+    # Supprime un fichier vidéo depuis la page Enregistrements
+    # Supprime aussi l'événement associé dans la base de données
+
+    try:
+        # Récupère le dossier des enregistrements
+        base_dir = _recordings_dir()
+
+        # Construit le chemin absolu du fichier demandé
+        abs_path = os.path.abspath(os.path.join(base_dir, rel_path))
+
+        # Sécurité : empêche de sortir du dossier recordings
+        if not abs_path.startswith(base_dir + os.sep):
+            abort(403)
+
+        # Vérifie que le fichier est bien une vidéo autorisée
+        ext = os.path.splitext(abs_path)[1].lower()
+        if ext not in VIDEO_EXT:
+            abort(403)
+
+        # Récupère le nom du fichier seul
+        filename = os.path.basename(rel_path)
+
+        # Supprime le fichier vidéo s'il existe
+        if os.path.isfile(abs_path):
+            os.remove(abs_path)
+
+        # Cherche les événements liés à cette vidéo
+        linked_events = Event.query.filter(
+            db.or_(
+                Event.video_path == rel_path,
+                Event.video_path == filename
+            )
+        ).all()
+
+        # Supprime les événements trouvés
+        deleted_events = 0
+        for event in linked_events:
+            db.session.delete(event)
+            deleted_events += 1
+
+        # Valide les suppressions en base
+        db.session.commit()
+
+        # Ajoute l'action dans le journal de bord
+        try:
+            audit(
+                "delete_recording_file",
+                username=current_user.username,
+                extra={
+                    "file": rel_path,
+                    "deleted_events": deleted_events
+                },
+            )
+        except Exception as audit_error:
+            current_app.logger.error(f"Erreur audit delete_recording_file: {audit_error}")
+
+        flash("Enregistrement et événement associé supprimés avec succès", "success")
+        return redirect(url_for("main.recordings"))
+
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.exception("Erreur recordings_delete")
+        flash(f"Erreur lors de la suppression : {e}", "danger")
+        return redirect(url_for("main.recordings"))
 
 @main_bp.post("/upload_webcam_recording")
 @login_required

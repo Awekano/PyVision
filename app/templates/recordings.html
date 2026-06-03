@@ -48,6 +48,12 @@
             <a class="btn btn--ghost" href="{{ url_for('main.recordings_view', rel_path=row.rel_path) }}" target="_blank" rel="noopener">Ouvrir</a>
           {% endif %}
           <a class="btn btn--primary" href="{{ url_for('main.recordings_download', rel_path=row.rel_path) }}">Télécharger</a>
+          
+          <form method="post" action="{{ url_for('main.recordings_delete', rel_path=row.rel_path) }}" onsubmit="return confirm('Voulez-vous vraiment supprimer cet enregistrement ?');" style="display:inline;">
+           <button class="btn btn--danger" type"submit">
+             Supprimer
+           </button>
+         </form>
         </div>
       </article>
     {% endfor %}
