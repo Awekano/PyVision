@@ -4,20 +4,25 @@
 {% block content %}
 <h1>Live</h1>
 
-<p>Mode normal : flux caméra IP via le serveur. Mode démo : webcam locale avec détection de mouvement.</p>
+<p>
+  Mode caméra IP : flux en direct avec détection côté navigateur et enregistrement WebM
+  <br>
+  Mode démo : webcam locale avec détection de mouvement
+</p>
 
 <div style="display:flex; gap:12px; margin:16px 0; flex-wrap:wrap;">
-  <button type="button" id="normalModeBtn">Mode normal</button>
+  <button type="button" id="normalModeBtn">Mode caméra IP</button>
   <button type="button" id="demoModeBtn">Démo webcam</button>
+  <button type="button" id="stopDetectionBtn">Arrêter détection</button>
 </div>
 
-<p id="liveStatus">Mode actuel : normal</p>
+<p id="liveStatus">Mode actuel : caméra IP</p>
 
 <div id="serverLiveBox">
   <img
     id="serverLive"
     src="{{ url_for('main.live_feed') }}"
-    alt="Flux live serveur"
+    alt="Flux live caméra IP"
     style="max-width: 900px; width:100%; border-radius:12px; background:#000;"
   >
 </div>
@@ -30,295 +35,361 @@
     playsinline
     style="max-width: 900px; width:100%; border-radius:12px; background:#000;"
   ></video>
-  <canvas id="motionCanvas" width="320" height="240" style="display:none;"></canvas>
 </div>
 
+<canvas id="motionCanvas" width="640" height="360" style="display:none;"></canvas>
+
 <script>
-  // Récupération des boutons permettant de changer de mode d'affichage.
   const normalModeBtn = document.getElementById("normalModeBtn");
   const demoModeBtn = document.getElementById("demoModeBtn");
+  const stopDetectionBtn = document.getElementById("stopDetectionBtn");
 
-  // Zone de texte utilisée pour afficher l'état actuel du live à l'utilisateur.
   const liveStatus = document.getElementById("liveStatus");
 
-  // Récupération des blocs HTML utilisés pour le flux serveur et la webcam locale.
   const serverLiveBox = document.getElementById("serverLiveBox");
   const demoLiveBox = document.getElementById("demoLiveBox");
+
+  const serverLive = document.getElementById("serverLive");
   const demoVideo = document.getElementById("demoVideo");
 
-  // Le canvas sert à lire les images de la webcam pour comparer les pixels entre deux frames.
   const motionCanvas = document.getElementById("motionCanvas");
   const ctx = motionCanvas.getContext("2d", { willReadFrequently: true });
 
-  // Flux vidéo de la webcam locale.
-  let mediaStream = null;
+  let currentMode = "ip";
 
-  // Objet JavaScript utilisé pour enregistrer la vidéo de la webcam.
+  let webcamStream = null;
   let mediaRecorder = null;
-
-  // Tableau qui stocke les morceaux vidéo générés pendant l'enregistrement.
   let recordedChunks = [];
 
-  // Image précédente utilisée pour comparer les pixels avec l'image actuelle.
   let previousFrame = null;
-
-  // Intervalle de détection lancé toutes les 250 ms.
   let motionInterval = null;
+  let canvasDrawInterval = null;
 
-  // Empêche de lancer plusieurs enregistrements en même temps.
   let isRecording = false;
-
-  // Pause courte après une détection pour éviter de déclencher plusieurs vidéos d'affilée.
   let motionCooldown = false;
 
-  // Seuil de différence de couleur entre deux pixels pour considérer qu'il y a un changement.
-  const MOTION_THRESHOLD = 18;
+  const RECORD_SECONDS = 10;
 
-  // Nombre minimum de pixels modifiés avant de considérer qu'un mouvement est détecté.
-  const MOTION_PIXELS_MIN = 3500;
+  // Détection toutes les 250 ms pour éviter de trop charger le navigateur
+  const DETECTION_INTERVAL_MS = 250;
 
-  function setNormalMode() {
-    // Affiche le flux caméra envoyé par le serveur Flask.
-    serverLiveBox.style.display = "block";
-    demoLiveBox.style.display = "none";
-    liveStatus.textContent = "Mode actuel : normal";
+  // Enregistrement à 25 fps
+  const RECORDING_FPS = 25;
+  const RECORDING_DRAW_INTERVAL_MS = 40;
 
-    // Coupe la webcam locale si le mode démo était actif.
-    stopDemoMode();
-  }
+  const COOLDOWN_AFTER_RECORD_MS = 5000;
 
-  function stopDemoMode() {
-    // Arrête la boucle de détection de mouvement.
-    if (motionInterval) {
-      clearInterval(motionInterval);
-      motionInterval = null;
-    }
-
-    // Réinitialise la dernière image analysée.
-    previousFrame = null;
-
-    // Coupe tous les flux de la webcam pour libérer la caméra du navigateur.
-    if (mediaStream) {
-      mediaStream.getTracks().forEach(track => track.stop());
-      mediaStream = null;
-    }
-
-    // Retire le flux vidéo de la balise <video>.
-    demoVideo.srcObject = null;
-  }
-
-  async function setDemoMode() {
-    try {
-      liveStatus.textContent = "Demande d'accès à la webcam...";
-
-      // Demande l'autorisation au navigateur d'utiliser la webcam sans le micro.
-      mediaStream = await navigator.mediaDevices.getUserMedia({
-        video: true,
-        audio: false
-      });
-
-      // Affiche le flux de la webcam dans la page.
-      demoVideo.srcObject = mediaStream;
-      serverLiveBox.style.display = "none";
-      demoLiveBox.style.display = "block";
-      liveStatus.textContent = "Mode actuel : démo webcam avec détection de mouvement";
-
-      // Lance l'analyse automatique des images de la webcam.
-      startMotionDetection();
-    } catch (err) {
-      // Affiche une erreur si l'utilisateur refuse la webcam ou si le navigateur bloque l'accès.
-      console.error(err);
-      liveStatus.textContent = "Impossible d'accéder à la webcam.";
-    }
-  }
+  // Sensibilité de la détection
+  const MOTION_THRESHOLD = 28;
+  const MOTION_PIXELS_MIN = 1800;
 
   function pickMimeType() {
-    // Liste des formats vidéo testés, du plus recommandé au plus simple.
     const candidates = [
-      "video/webm;codecs=vp9,opus",
-      "video/webm;codecs=vp8,opus",
-      "video/webm",
-      "video/mp4"
+      "video/webm;codecs=vp9",
+      "video/webm;codecs=vp8",
+      "video/webm"
     ];
 
-    // Retourne le premier format compatible avec le navigateur.
     for (const type of candidates) {
       if (window.MediaRecorder && MediaRecorder.isTypeSupported(type)) {
         return type;
       }
     }
 
-    // Si aucun format précis n'est compatible, le navigateur choisira le format par défaut.
     return "";
   }
 
+  function stopCanvasDrawing() {
+    if (canvasDrawInterval) {
+      clearInterval(canvasDrawInterval);
+      canvasDrawInterval = null;
+    }
+  }
+
+  function startCanvasDrawing() {
+    stopCanvasDrawing();
+
+    canvasDrawInterval = setInterval(() => {
+      const source = getCurrentSourceElement();
+
+      try {
+        if (currentMode === "demo") {
+          if (!demoVideo.videoWidth || !demoVideo.videoHeight) {
+            return;
+          }
+        }
+
+        ctx.drawImage(source, 0, 0, motionCanvas.width, motionCanvas.height);
+      } catch (err) {
+        console.error("Erreur dessin canvas", err);
+      }
+    }, RECORDING_DRAW_INTERVAL_MS);
+  }
+
+  function stopMotionDetection() {
+    if (motionInterval) {
+      clearInterval(motionInterval);
+      motionInterval = null;
+    }
+
+    stopCanvasDrawing();
+
+    previousFrame = null;
+    motionCooldown = false;
+
+    liveStatus.textContent = "Détection arrêtée";
+  }
+
+  function stopWebcam() {
+    if (webcamStream) {
+      webcamStream.getTracks().forEach(track => track.stop());
+      webcamStream = null;
+    }
+
+    demoVideo.srcObject = null;
+  }
+
+  function setNormalMode() {
+    currentMode = "ip";
+
+    serverLiveBox.style.display = "block";
+    demoLiveBox.style.display = "none";
+
+    stopWebcam();
+
+    liveStatus.textContent = "Mode caméra IP : surveillance active";
+
+    startCanvasDrawing();
+    startMotionDetection();
+  }
+
+  async function setDemoMode() {
+    try {
+      currentMode = "demo";
+      liveStatus.textContent = "Demande d'accès à la webcam...";
+
+      webcamStream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: false
+      });
+
+      demoVideo.srcObject = webcamStream;
+
+      serverLiveBox.style.display = "none";
+      demoLiveBox.style.display = "block";
+
+      liveStatus.textContent = "Mode démo webcam : surveillance active";
+
+      startCanvasDrawing();
+      startMotionDetection();
+
+    } catch (err) {
+      console.error(err);
+      liveStatus.textContent = "Impossible d'accéder à la webcam";
+    }
+  }
+
+  function getCurrentSourceElement() {
+    if (currentMode === "ip") {
+      return serverLive;
+    }
+
+    return demoVideo;
+  }
+
+  function drawCurrentFrameForDetection() {
+    try {
+      return ctx.getImageData(0, 0, motionCanvas.width, motionCanvas.height);
+    } catch (err) {
+      console.error("Impossible de lire le canvas pour la détection", err);
+      return null;
+    }
+  }
+
+  function hasMotion(frame) {
+    const data = frame.data;
+
+    if (!previousFrame) {
+      previousFrame = new Uint8ClampedArray(data);
+      return false;
+    }
+
+    let changedPixels = 0;
+
+    /*
+      On saute plusieurs pixels pour réduire la charge CPU
+      Chaque pixel = 4 valeurs RGBA
+      i += 16 revient à analyser environ 1 pixel sur 4
+    */
+    for (let i = 0; i < data.length; i += 16) {
+      const dr = Math.abs(data[i] - previousFrame[i]);
+      const dg = Math.abs(data[i + 1] - previousFrame[i + 1]);
+      const db = Math.abs(data[i + 2] - previousFrame[i + 2]);
+
+      if ((dr + dg + db) > MOTION_THRESHOLD) {
+        changedPixels++;
+      }
+    }
+
+    previousFrame = new Uint8ClampedArray(data);
+
+    return changedPixels > MOTION_PIXELS_MIN;
+  }
+
   function startMotionDetection() {
-    // Évite de créer plusieurs boucles de détection en même temps.
     if (motionInterval) {
       clearInterval(motionInterval);
     }
 
-    // Analyse une image de la webcam toutes les 250 ms.
+    previousFrame = null;
+
     motionInterval = setInterval(() => {
-      // Attend que la vidéo soit réellement chargée avant d'analyser les pixels.
-      if (!demoVideo.videoWidth || !demoVideo.videoHeight) return;
-
-      // Ne détecte pas de nouveau mouvement pendant un enregistrement ou pendant le délai de pause.
-      if (isRecording || motionCooldown) return;
-
-      // Dessine l'image actuelle de la webcam dans le canvas invisible.
-      ctx.drawImage(demoVideo, 0, 0, motionCanvas.width, motionCanvas.height);
-
-      // Récupère les pixels de l'image actuelle.
-      const frame = ctx.getImageData(0, 0, motionCanvas.width, motionCanvas.height);
-      const data = frame.data;
-
-      // Au premier passage, on garde simplement l'image comme référence.
-      if (!previousFrame) {
-        previousFrame = new Uint8ClampedArray(data);
+      if (isRecording || motionCooldown) {
         return;
       }
 
-      let changedPixels = 0;
+      const frame = drawCurrentFrameForDetection();
 
-      // Compare les pixels de l'image actuelle avec ceux de l'image précédente.
-      // Les pixels sont parcourus par groupe de 4 valeurs : rouge, vert, bleu, alpha.
-      for (let i = 0; i < data.length; i += 4) {
-        const dr = Math.abs(data[i] - previousFrame[i]);
-        const dg = Math.abs(data[i + 1] - previousFrame[i + 1]);
-        const db = Math.abs(data[i + 2] - previousFrame[i + 2]);
-
-        // Si l'écart de couleur est supérieur au seuil, le pixel est considéré comme modifié.
-        if ((dr + dg + db) > MOTION_THRESHOLD) {
-          changedPixels++;
-        }
+      if (!frame) {
+        return;
       }
 
-      // L'image actuelle devient la référence pour la prochaine comparaison.
-      previousFrame = new Uint8ClampedArray(data);
-
-      // Si assez de pixels ont changé, un mouvement est détecté et l'enregistrement démarre.
-      if (changedPixels > MOTION_PIXELS_MIN) {
-        liveStatus.textContent = "Mouvement détecté : enregistrement 10 secondes...";
+      if (hasMotion(frame)) {
+        liveStatus.textContent = "Mouvement détecté : enregistrement WebM...";
         startAutoRecording();
       }
-    }, 250);
+
+    }, DETECTION_INTERVAL_MS);
   }
 
-  async function uploadRecordedBlob(videoBlob, ext) {
-    // Vérifie qu'une vidéo a bien été créée avant l'envoi au serveur.
-    if (!videoBlob) {
-      throw new Error("Blob vidéo introuvable");
+  function getRecordingStream() {
+    if (currentMode === "ip") {
+      return motionCanvas.captureStream(RECORDING_FPS);
     }
 
-    // FormData permet d'envoyer un fichier vidéo avec une requête HTTP POST.
-    const formData = new FormData();
-    formData.append("video", videoBlob, `motion_demo_${Date.now()}.${ext}`);
+    return webcamStream;
+  }
 
-    // Envoie la vidéo enregistrée vers la route Flask chargée de sauvegarder le fichier.
-    const response = await fetch("/upload_webcam_recording", {
+  async function uploadRecordedBlob(videoBlob, ext, sourceName) {
+    if (!videoBlob || videoBlob.size < 1000) {
+      throw new Error("Vidéo vide ou invalide");
+    }
+
+    const formData = new FormData();
+
+    const filename = `${sourceName}_${Date.now()}.${ext}`;
+    formData.append("video", videoBlob, filename);
+
+    const response = await fetch("{{ url_for('main.upload_webcam_recording') }}", {
       method: "POST",
       body: formData
     });
 
     let data = {};
+
     try {
-      // Le serveur doit répondre avec du JSON contenant le résultat de l'upload.
       data = await response.json();
     } catch (e) {
       throw new Error("Réponse JSON invalide du serveur");
     }
 
-    // Si le serveur renvoie une erreur HTTP, on remonte le message d'erreur.
     if (!response.ok) {
-      throw new Error(data.error || "Erreur d'upload");
+      throw new Error(data.error || "Erreur upload vidéo");
     }
 
     return data;
   }
 
   function startAutoRecording() {
-    // Ne démarre pas l'enregistrement si la webcam n'est pas active ou si un enregistrement existe déjà.
-    if (!mediaStream || isRecording) return;
+    if (isRecording) {
+      return;
+    }
+
+    const recordingStream = getRecordingStream();
+
+    if (!recordingStream) {
+      liveStatus.textContent = "Aucun flux disponible pour enregistrer";
+      return;
+    }
 
     isRecording = true;
     motionCooldown = true;
     recordedChunks = [];
 
     try {
-      // Sélectionne le meilleur format vidéo compatible avec le navigateur.
       const mimeType = pickMimeType();
-      mediaRecorder = mimeType
-        ? new MediaRecorder(mediaStream, { mimeType })
-        : new MediaRecorder(mediaStream);
 
-      // À chaque morceau vidéo disponible, on l'ajoute au tableau recordedChunks.
+      mediaRecorder = mimeType
+        ? new MediaRecorder(recordingStream, { mimeType })
+        : new MediaRecorder(recordingStream);
+
       mediaRecorder.ondataavailable = (event) => {
         if (event.data && event.data.size > 0) {
           recordedChunks.push(event.data);
         }
       };
 
-      // Cette fonction est exécutée quand l'enregistrement s'arrête.
       mediaRecorder.onstop = async () => {
         try {
-          // Vérifie qu'au moins un morceau vidéo a été enregistré.
           if (!recordedChunks || recordedChunks.length === 0) {
             throw new Error("Aucune donnée vidéo enregistrée");
           }
 
-          // Détermine l'extension du fichier selon le format vidéo utilisé.
           const finalType = mediaRecorder.mimeType || "video/webm";
-          const ext = finalType.includes("mp4") ? "mp4" : "webm";
+          const ext = "webm";
 
-          // Assemble tous les morceaux vidéo dans un seul fichier Blob.
           const videoBlob = new Blob(recordedChunks, { type: finalType });
 
-          // Envoie la vidéo au serveur Flask.
-          liveStatus.textContent = "Envoi de la vidéo au serveur...";
-          const result = await uploadRecordedBlob(videoBlob, ext);
+          const sourceName = currentMode === "ip" ? "motion_ip" : "motion_demo";
+
+          liveStatus.textContent = "Envoi de la vidéo WebM au serveur...";
+
+          const result = await uploadRecordedBlob(videoBlob, ext, sourceName);
 
           console.log("Upload OK :", result);
+
           liveStatus.textContent = result.message
             ? `${result.message} : ${result.filename || ""}`
             : `Vidéo enregistrée : ${result.filename || ""}`;
+
         } catch (err) {
-          // Affiche une erreur si l'assemblage ou l'envoi de la vidéo échoue.
           console.error("Erreur upload :", err);
-          liveStatus.textContent = `Échec de l'envoi au serveur : ${err.message || err}`;
+          liveStatus.textContent = `Échec de l'envoi : ${err.message || err}`;
+
         } finally {
-          // Autorise une nouvelle détection après la fin de l'enregistrement.
           isRecording = false;
 
-          // Attend 3 secondes avant de relancer la détection pour éviter les déclenchements répétés.
           setTimeout(() => {
             motionCooldown = false;
-            liveStatus.textContent = "Mode démo actif : surveillance de mouvement";
-          }, 3000);
+            liveStatus.textContent = currentMode === "ip"
+              ? "Mode caméra IP : surveillance active"
+              : "Mode démo webcam : surveillance active";
+          }, COOLDOWN_AFTER_RECORD_MS);
         }
       };
 
-      // Démarre l'enregistrement vidéo.
       mediaRecorder.start();
 
-      // Arrête automatiquement l'enregistrement au bout de 10 secondes.
       setTimeout(() => {
         if (mediaRecorder && mediaRecorder.state !== "inactive") {
           mediaRecorder.stop();
         }
-      }, 10000);
+      }, RECORD_SECONDS * 1000);
 
     } catch (err) {
-      // Gestion des erreurs si le navigateur ne peut pas démarrer MediaRecorder.
       console.error(err);
       isRecording = false;
       motionCooldown = false;
-      liveStatus.textContent = "Impossible de démarrer l'enregistrement.";
+      liveStatus.textContent = "Impossible de démarrer l'enregistrement WebM";
     }
   }
 
-  // Association des boutons HTML avec les fonctions JavaScript correspondantes.
   normalModeBtn.addEventListener("click", setNormalMode);
   demoModeBtn.addEventListener("click", setDemoMode);
+  stopDetectionBtn.addEventListener("click", stopMotionDetection);
+
+  window.addEventListener("load", () => {
+    setNormalMode();
+  });
 </script>
 {% endblock %}
