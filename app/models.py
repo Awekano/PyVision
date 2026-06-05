@@ -98,6 +98,18 @@ class AlertSettings(db.Model):
     # Heure de fin de la plage d'alerte
     end_time = db.Column(db.Time, nullable=False)
 
+class AppSetting(db.Model):
+    # Nom de la table utilisée dans la base de données
+    __tablename__ = "app_settings"
+
+    # Identifiant unique du paramètre
+    id = db.Column(db.Integer, primary_key=True)
+
+    # Nom du paramètre, par exemple : alert_email_recipient
+    setting_key = db.Column(db.String(100), unique=True, nullable=False)
+
+    # Valeur du paramètre, par exemple : destinataire@mail.com
+    setting_value = db.Column(db.String(255), nullable=False)
 
 @login_manager.user_loader
 def load_user(user_id: str):

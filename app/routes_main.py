@@ -7,6 +7,7 @@ import os
 import time as time_module
 from datetime import datetime, time as dt_time
 from pathlib import Path
+from functools import wraps
 
 import cv2
 from flask import (
@@ -33,7 +34,7 @@ from app.models import AlertSettings, AuditLog, Event, User
 from app.services.alert_settings import is_alert_allowed
 from app.services.audit import audit
 from mailer import send_alert_email
-from functools import wraps
+
 
 # Création du blueprint principal
 main_bp = Blueprint("main", __name__)
@@ -44,8 +45,9 @@ VIDEO_EXT = {".mp4", ".mkv", ".webm", ".avi", ".mov"}
 # Extensions qui peuvent être affichées directement dans le navigateur
 INLINE_VIDEO_EXT = {".mp4", ".mkv", ".webm", ".mov"}
 
-# Extensions acceptées lors de l'envoi d'une vidéo depuis la webcam
+# Extensions acceptées lors de l'envoi d'une vidéo depuis le navigateur
 UPLOAD_EXT = {".webm", ".mp4", ".mkv"}
+
 
 def admin_required(f):
     @wraps(f)
@@ -54,7 +56,9 @@ def admin_required(f):
         if not current_user.is_authenticated or not current_user.is_admin():
             abort(403)
         return f(*args, **kwargs)
+
     return decorated_function
+
 
 @main_bp.get("/")
 @login_required
@@ -332,6 +336,9 @@ def _mjpeg_stream(rtsp_url: str):
     # Ouverture du flux vidéo RTSP
     cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
 
+    # Réduit le buffer pour éviter le retard vidéo
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
     # Si le flux est inaccessible, affiche une image d'erreur
     if not cap.isOpened():
         yield (
@@ -355,6 +362,9 @@ def _mjpeg_stream(rtsp_url: str):
                 time_module.sleep(0.2)
                 continue
 
+            # Redimensionne pour limiter la charge CPU
+            frame = cv2.resize(frame, (960, 540))
+
             # Encode l'image en JPEG
             success, buffer = cv2.imencode(".jpg", frame, encode_params)
 
@@ -369,6 +379,7 @@ def _mjpeg_stream(rtsp_url: str):
                 + buffer.tobytes()
                 + b"\r\n"
             )
+
     finally:
         # Ferme proprement le flux caméra
         cap.release()
@@ -398,6 +409,7 @@ def _error_frame(text_value: str) -> bytes:
 
     # Retourne l'image encodée
     return buffer.tobytes() if ok else b""
+
 
 @main_bp.post("/recordings/delete/<path:rel_path>")
 @login_required
@@ -432,7 +444,7 @@ def recordings_delete(rel_path: str):
         linked_events = Event.query.filter(
             db.or_(
                 Event.video_path == rel_path,
-                Event.video_path == filename
+                Event.video_path == filename,
             )
         ).all()
 
@@ -452,7 +464,7 @@ def recordings_delete(rel_path: str):
                 username=current_user.username,
                 extra={
                     "file": rel_path,
-                    "deleted_events": deleted_events
+                    "deleted_events": deleted_events,
                 },
             )
         except Exception as audit_error:
@@ -467,10 +479,11 @@ def recordings_delete(rel_path: str):
         flash(f"Erreur lors de la suppression : {e}", "danger")
         return redirect(url_for("main.recordings"))
 
+
 @main_bp.post("/upload_webcam_recording")
 @login_required
 def upload_webcam_recording():
-    # Cette route reçoit une vidéo envoyée par le mode webcam démo
+    # Cette route reçoit une vidéo WebM envoyée par le navigateur
     try:
         # Récupère le fichier vidéo envoyé par le navigateur
         file = request.files.get("video")
@@ -495,7 +508,13 @@ def upload_webcam_recording():
 
         # Génère un nom de fichier unique avec la date et l'utilisateur
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"motion_demo_{current_user.username}_{timestamp}{ext}"
+
+        # Si la vidéo vient de la caméra IP, le nom envoyé commence généralement par motion_ip
+        if original_name.startswith("motion_ip"):
+            filename = f"motion_ip_{current_user.username}_{timestamp}{ext}"
+        else:
+            filename = f"motion_demo_{current_user.username}_{timestamp}{ext}"
+
         save_path = os.path.join(recordings_dir, filename)
 
         # Sauvegarde la vidéo sur le serveur
@@ -511,7 +530,15 @@ def upload_webcam_recording():
         event_kind = "alerte" if is_alert else "video_recorded"
 
         # Description affichée dans la base
-        description = "Alerte mail envoyée" if is_alert else "Vidéo enregistrée"
+        if original_name.startswith("motion_ip"):
+            description = "Détection caméra IP"
+        else:
+            description = "Détection webcam démo"
+
+        if is_alert:
+            description = description + " avec alerte mail"
+        else:
+            description = description + " hors plage d'alerte"
 
         # Création de l'événement avec les colonnes du modèle SQLAlchemy
         event = Event(
@@ -544,7 +571,7 @@ def upload_webcam_recording():
             ),
             {
                 "event_type": event_kind,
-                "camera_name": "Camera 1",
+                "camera_name": "Camera IP" if original_name.startswith("motion_ip") else "Webcam demo",
                 "description": description,
                 "video_filename": filename,
                 "image_filename": None,
@@ -572,12 +599,12 @@ def upload_webcam_recording():
         # Ajout de l'action dans le journal de bord
         try:
             audit(
-                "upload_webcam_recording",
+                "upload_browser_recording",
                 username=current_user.username,
                 extra={"file": filename, "event_id": event.id, "kind": event_kind},
             )
         except Exception as audit_error:
-            current_app.logger.error(f"Erreur audit upload_webcam_recording: {audit_error}")
+            current_app.logger.error(f"Erreur audit upload_browser_recording: {audit_error}")
 
         # Réponse JSON envoyée au navigateur
         return jsonify(
@@ -710,8 +737,10 @@ def download_mindview():
         file_path,
         as_attachment=True,
         download_name="PyVision_gantt.mvdx",
-        mimetype="application/octet-stream"
+        mimetype="application/octet-stream",
     )
+
+
 @main_bp.route("/admin/users")
 @login_required
 @admin_required
@@ -745,7 +774,7 @@ def admin_add_user():
     new_user = User(
         username=username,
         role="admin" if is_admin else "user",
-        is_active=True
+        is_active=True,
     )
 
     # Hash le mot de passe avant l'enregistrement
