@@ -2,452 +2,97 @@
 {% block title %}PyVision - Live{% endblock %}
 
 {% block content %}
-<h1>Live</h1>
+<h1>Live caméra</h1>
 
-{% if current_user.is_admin() %}
 <div style="padding:16px; margin:16px 0; border-radius:12px; background:#f3f4f6;">
-  <h2 style="margin-top:0;">Mode d'enregistrement caméra</h2>
+  <h2 style="margin-top:0;">Surveillance serveur</h2>
 
   <p>
-    Mode actuel :
-    {% if camera_recording_mode == "server" %}
-      <strong>Mode 1 : enregistrement même sans chargement de la page</strong>
-    {% else %}
-      <strong>Mode 2 : enregistrement uniquement si le live est chargé</strong>
-    {% endif %}
+    La détection et l'enregistrement sont maintenant gérés directement par le serveur.
+    Le live peut être fermé sans arrêter la surveillance.
   </p>
 
-  <form method="post" action="{{ url_for('main.admin_camera_mode') }}" style="display:flex; gap:12px; flex-wrap:wrap;">
-    <button
-      type="submit"
-      name="mode"
-      value="server"
-      {% if camera_recording_mode == "server" %}disabled{% endif %}
-    >
-      Mode 1 : enregistrement permanent
-    </button>
+  <p>
+    Statut :
+    <strong id="serverStatus">Chargement...</strong>
+  </p>
 
-    <button
-      type="submit"
-      name="mode"
-      value="live"
-      {% if camera_recording_mode == "live" %}disabled{% endif %}
-    >
-      Mode 2 : enregistrement avec live ouvert
-    </button>
-  </form>
-</div>
-{% endif %}
+  <p id="lastEventInfo">
+    Dernier événement : chargement...
+  </p>
 
-<p>
-  Mode caméra IP : flux en direct avec détection côté navigateur et enregistrement WebM
-  <br>
-  Mode démo : webcam locale avec détection de mouvement
-</p>
+  <div style="display:flex; gap:12px; flex-wrap:wrap;">
+    <a href="{{ url_for('main.events') }}">
+      <button type="button">Voir les événements</button>
+    </a>
 
-<div style="display:flex; gap:12px; margin:16px 0; flex-wrap:wrap;">
-  <button type="button" id="normalModeBtn">Mode caméra IP</button>
-  <button type="button" id="demoModeBtn">Démo webcam</button>
-  <button type="button" id="stopDetectionBtn">Arrêter détection</button>
+    <a href="{{ url_for('main.recordings') }}">
+      <button type="button">Voir les enregistrements</button>
+    </a>
+  </div>
 </div>
 
-<p id="liveStatus">Chargement du live...</p>
+<p id="liveStatus">Chargement du flux caméra IP...</p>
 
 <div id="serverLiveBox">
   <img
     id="serverLive"
     src="{{ url_for('main.live_feed') }}"
     alt="Flux live caméra IP"
-    style="max-width: 900px; width:100%; border-radius:12px; background:#000;"
+    style="max-width:900px; width:100%; border-radius:12px; background:#000;"
   >
 </div>
 
-<div id="demoLiveBox" style="display:none;">
-  <video
-    id="demoVideo"
-    autoplay
-    muted
-    playsinline
-    style="max-width: 900px; width:100%; border-radius:12px; background:#000;"
-  ></video>
-</div>
-
-<canvas id="motionCanvas" width="640" height="360" style="display:none;"></canvas>
-
 <script>
-  const CAMERA_RECORDING_MODE = "{{ camera_recording_mode|default('live') }}";
-
-  const normalModeBtn = document.getElementById("normalModeBtn");
-  const demoModeBtn = document.getElementById("demoModeBtn");
-  const stopDetectionBtn = document.getElementById("stopDetectionBtn");
-
+  const serverStatus = document.getElementById("serverStatus");
+  const lastEventInfo = document.getElementById("lastEventInfo");
   const liveStatus = document.getElementById("liveStatus");
-
-  const serverLiveBox = document.getElementById("serverLiveBox");
-  const demoLiveBox = document.getElementById("demoLiveBox");
-
   const serverLive = document.getElementById("serverLive");
-  const demoVideo = document.getElementById("demoVideo");
 
-  const motionCanvas = document.getElementById("motionCanvas");
-  const ctx = motionCanvas.getContext("2d", { willReadFrequently: true });
-
-  let currentMode = "ip";
-
-  let webcamStream = null;
-  let mediaRecorder = null;
-  let recordedChunks = [];
-
-  let previousFrame = null;
-  let motionInterval = null;
-  let canvasDrawInterval = null;
-
-  let isRecording = false;
-  let motionCooldown = false;
-
-  const RECORD_SECONDS = 10;
-
-  // Détection toutes les 250 ms pour éviter de trop charger le navigateur
-  const DETECTION_INTERVAL_MS = 250;
-
-  // Enregistrement à 25 fps
-  const RECORDING_FPS = 25;
-  const RECORDING_DRAW_INTERVAL_MS = 40;
-
-  const COOLDOWN_AFTER_RECORD_MS = 5000;
-
-  // Sensibilité de la détection
-  const MOTION_THRESHOLD = 28;
-  const MOTION_PIXELS_MIN = 1800;
-
-  function pickMimeType() {
-    const candidates = [
-      "video/webm;codecs=vp9",
-      "video/webm;codecs=vp8",
-      "video/webm"
-    ];
-
-    for (const type of candidates) {
-      if (window.MediaRecorder && MediaRecorder.isTypeSupported(type)) {
-        return type;
-      }
-    }
-
-    return "";
+  function refreshLiveImage() {
+    const baseUrl = "{{ url_for('main.live_feed') }}";
+    serverLive.src = `${baseUrl}?t=${Date.now()}`;
   }
 
-  function stopCanvasDrawing() {
-    if (canvasDrawInterval) {
-      clearInterval(canvasDrawInterval);
-      canvasDrawInterval = null;
-    }
-  }
-
-  function startCanvasDrawing() {
-    stopCanvasDrawing();
-
-    canvasDrawInterval = setInterval(() => {
-      const source = getCurrentSourceElement();
-
-      try {
-        if (currentMode === "demo") {
-          if (!demoVideo.videoWidth || !demoVideo.videoHeight) {
-            return;
-          }
-        }
-
-        ctx.drawImage(source, 0, 0, motionCanvas.width, motionCanvas.height);
-      } catch (err) {
-        console.error("Erreur dessin canvas", err);
-      }
-    }, RECORDING_DRAW_INTERVAL_MS);
-  }
-
-  function stopMotionDetection() {
-    if (motionInterval) {
-      clearInterval(motionInterval);
-      motionInterval = null;
-    }
-
-    stopCanvasDrawing();
-
-    previousFrame = null;
-    motionCooldown = false;
-
-    liveStatus.textContent = "Détection arrêtée";
-  }
-
-  function stopWebcam() {
-    if (webcamStream) {
-      webcamStream.getTracks().forEach(track => track.stop());
-      webcamStream = null;
-    }
-
-    demoVideo.srcObject = null;
-  }
-
-  function setNormalMode() {
-    currentMode = "ip";
-
-    serverLiveBox.style.display = "block";
-    demoLiveBox.style.display = "none";
-
-    stopWebcam();
-
-    if (CAMERA_RECORDING_MODE === "server") {
-      stopMotionDetection();
-      liveStatus.textContent = "Mode serveur : le live est affiché, la détection tourne sur le serveur";
-      return;
-    }
-
-    liveStatus.textContent = "Mode caméra IP : surveillance active";
-
-    startCanvasDrawing();
-    startMotionDetection();
-  }
-
-  async function setDemoMode() {
+  async function refreshDetectionStatus() {
     try {
-      currentMode = "demo";
-      liveStatus.textContent = "Demande d'accès à la webcam...";
-
-      webcamStream = await navigator.mediaDevices.getUserMedia({
-        video: true,
-        audio: false
+      const response = await fetch("{{ url_for('main.detection_status') }}", {
+        cache: "no-store"
       });
 
-      demoVideo.srcObject = webcamStream;
-
-      serverLiveBox.style.display = "none";
-      demoLiveBox.style.display = "block";
-
-      liveStatus.textContent = "Mode démo webcam : surveillance active";
-
-      startCanvasDrawing();
-      startMotionDetection();
-
-    } catch (err) {
-      console.error(err);
-      liveStatus.textContent = "Impossible d'accéder à la webcam";
-    }
-  }
-
-  function getCurrentSourceElement() {
-    if (currentMode === "ip") {
-      return serverLive;
-    }
-
-    return demoVideo;
-  }
-
-  function drawCurrentFrameForDetection() {
-    try {
-      return ctx.getImageData(0, 0, motionCanvas.width, motionCanvas.height);
-    } catch (err) {
-      console.error("Impossible de lire le canvas pour la détection", err);
-      return null;
-    }
-  }
-
-  function hasMotion(frame) {
-    const data = frame.data;
-
-    if (!previousFrame) {
-      previousFrame = new Uint8ClampedArray(data);
-      return false;
-    }
-
-    let changedPixels = 0;
-
-    /*
-      On saute plusieurs pixels pour réduire la charge CPU
-      Chaque pixel = 4 valeurs RGBA
-      i += 16 revient à analyser environ 1 pixel sur 4
-    */
-    for (let i = 0; i < data.length; i += 16) {
-      const dr = Math.abs(data[i] - previousFrame[i]);
-      const dg = Math.abs(data[i + 1] - previousFrame[i + 1]);
-      const db = Math.abs(data[i + 2] - previousFrame[i + 2]);
-
-      if ((dr + dg + db) > MOTION_THRESHOLD) {
-        changedPixels++;
-      }
-    }
-
-    previousFrame = new Uint8ClampedArray(data);
-
-    return changedPixels > MOTION_PIXELS_MIN;
-  }
-
-  function startMotionDetection() {
-    if (CAMERA_RECORDING_MODE === "server" && currentMode === "ip") {
-      liveStatus.textContent = "Mode serveur : détection navigateur désactivée";
-      return;
-    }
-
-    if (motionInterval) {
-      clearInterval(motionInterval);
-    }
-
-    previousFrame = null;
-
-    motionInterval = setInterval(() => {
-      if (isRecording || motionCooldown) {
-        return;
+      if (!response.ok) {
+        throw new Error("Réponse serveur incorrecte");
       }
 
-      const frame = drawCurrentFrameForDetection();
+      const data = await response.json();
 
-      if (!frame) {
-        return;
+      serverStatus.textContent = "Service serveur actif";
+      liveStatus.textContent = "Flux live caméra IP actif";
+
+      if (data.latest_event) {
+        lastEventInfo.textContent =
+          `Dernier événement : ${data.latest_event.kind} le ${data.latest_event.created_at}`;
+      } else {
+        lastEventInfo.textContent = "Dernier événement : aucun événement enregistré";
       }
 
-      if (hasMotion(frame)) {
-        liveStatus.textContent = "Mouvement détecté : enregistrement WebM...";
-        startAutoRecording();
-      }
-
-    }, DETECTION_INTERVAL_MS);
-  }
-
-  function getRecordingStream() {
-    if (currentMode === "ip") {
-      return motionCanvas.captureStream(RECORDING_FPS);
-    }
-
-    return webcamStream;
-  }
-
-  async function uploadRecordedBlob(videoBlob, ext, sourceName) {
-    if (!videoBlob || videoBlob.size < 1000) {
-      throw new Error("Vidéo vide ou invalide");
-    }
-
-    const formData = new FormData();
-
-    const filename = `${sourceName}_${Date.now()}.${ext}`;
-    formData.append("video", videoBlob, filename);
-
-    const response = await fetch("{{ url_for('main.upload_webcam_recording') }}", {
-      method: "POST",
-      body: formData
-    });
-
-    let data = {};
-
-    try {
-      data = await response.json();
-    } catch (e) {
-      throw new Error("Réponse JSON invalide du serveur");
-    }
-
-    if (!response.ok) {
-      throw new Error(data.error || "Erreur upload vidéo");
-    }
-
-    return data;
-  }
-
-  function startAutoRecording() {
-    if (CAMERA_RECORDING_MODE === "server" && currentMode === "ip") {
-      liveStatus.textContent = "Mode serveur actif : l'enregistrement est géré par le serveur";
-      return;
-    }
-
-    if (isRecording) {
-      return;
-    }
-
-    const recordingStream = getRecordingStream();
-
-    if (!recordingStream) {
-      liveStatus.textContent = "Aucun flux disponible pour enregistrer";
-      return;
-    }
-
-    isRecording = true;
-    motionCooldown = true;
-    recordedChunks = [];
-
-    try {
-      const mimeType = pickMimeType();
-
-      mediaRecorder = mimeType
-        ? new MediaRecorder(recordingStream, { mimeType })
-        : new MediaRecorder(recordingStream);
-
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data && event.data.size > 0) {
-          recordedChunks.push(event.data);
-        }
-      };
-
-      mediaRecorder.onstop = async () => {
-        try {
-          if (!recordedChunks || recordedChunks.length === 0) {
-            throw new Error("Aucune donnée vidéo enregistrée");
-          }
-
-          const finalType = mediaRecorder.mimeType || "video/webm";
-          const ext = "webm";
-
-          const videoBlob = new Blob(recordedChunks, { type: finalType });
-
-          const sourceName = currentMode === "ip" ? "motion_ip" : "motion_demo";
-
-          liveStatus.textContent = "Envoi de la vidéo WebM au serveur...";
-
-          const result = await uploadRecordedBlob(videoBlob, ext, sourceName);
-
-          console.log("Upload OK :", result);
-
-          liveStatus.textContent = result.message
-            ? `${result.message} : ${result.filename || ""}`
-            : `Vidéo enregistrée : ${result.filename || ""}`;
-
-        } catch (err) {
-          console.error("Erreur upload :", err);
-          liveStatus.textContent = `Échec de l'envoi : ${err.message || err}`;
-
-        } finally {
-          isRecording = false;
-
-          setTimeout(() => {
-            motionCooldown = false;
-
-            if (CAMERA_RECORDING_MODE === "server" && currentMode === "ip") {
-              liveStatus.textContent = "Mode serveur : la détection tourne sur le serveur";
-            } else {
-              liveStatus.textContent = currentMode === "ip"
-                ? "Mode caméra IP : surveillance active"
-                : "Mode démo webcam : surveillance active";
-            }
-          }, COOLDOWN_AFTER_RECORD_MS);
-        }
-      };
-
-      mediaRecorder.start();
-
-      setTimeout(() => {
-        if (mediaRecorder && mediaRecorder.state !== "inactive") {
-          mediaRecorder.stop();
-        }
-      }, RECORD_SECONDS * 1000);
-
-    } catch (err) {
-      console.error(err);
-      isRecording = false;
-      motionCooldown = false;
-      liveStatus.textContent = "Impossible de démarrer l'enregistrement WebM";
+    } catch (error) {
+      console.error(error);
+      serverStatus.textContent = "Statut serveur indisponible";
+      lastEventInfo.textContent = "Impossible de récupérer le dernier événement";
     }
   }
 
-  normalModeBtn.addEventListener("click", setNormalMode);
-  demoModeBtn.addEventListener("click", setDemoMode);
-  stopDetectionBtn.addEventListener("click", stopMotionDetection);
-
-  window.addEventListener("load", () => {
-    setNormalMode();
+  serverLive.addEventListener("load", () => {
+    liveStatus.textContent = "Flux live caméra IP actif";
   });
+
+  serverLive.addEventListener("error", () => {
+    liveStatus.textContent = "Erreur flux live, tentative de reconnexion...";
+    setTimeout(refreshLiveImage, 3000);
+  });
+
+  refreshDetectionStatus();
+  setInterval(refreshDetectionStatus, 5000);
 </script>
 {% endblock %}
