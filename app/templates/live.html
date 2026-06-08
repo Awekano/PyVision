@@ -4,6 +4,41 @@
 {% block content %}
 <h1>Live</h1>
 
+{% if current_user.is_admin() %}
+<div style="padding:16px; margin:16px 0; border-radius:12px; background:#f3f4f6;">
+  <h2 style="margin-top:0;">Mode d'enregistrement caméra</h2>
+
+  <p>
+    Mode actuel :
+    {% if camera_recording_mode == "server" %}
+      <strong>Mode 1 : enregistrement même sans chargement de la page</strong>
+    {% else %}
+      <strong>Mode 2 : enregistrement uniquement si le live est chargé</strong>
+    {% endif %}
+  </p>
+
+  <form method="post" action="{{ url_for('main.admin_camera_mode') }}" style="display:flex; gap:12px; flex-wrap:wrap;">
+    <button
+      type="submit"
+      name="mode"
+      value="server"
+      {% if camera_recording_mode == "server" %}disabled{% endif %}
+    >
+      Mode 1 : enregistrement permanent
+    </button>
+
+    <button
+      type="submit"
+      name="mode"
+      value="live"
+      {% if camera_recording_mode == "live" %}disabled{% endif %}
+    >
+      Mode 2 : enregistrement avec live ouvert
+    </button>
+  </form>
+</div>
+{% endif %}
+
 <p>
   Mode caméra IP : flux en direct avec détection côté navigateur et enregistrement WebM
   <br>
@@ -16,7 +51,7 @@
   <button type="button" id="stopDetectionBtn">Arrêter détection</button>
 </div>
 
-<p id="liveStatus">Mode actuel : caméra IP</p>
+<p id="liveStatus">Chargement du live...</p>
 
 <div id="serverLiveBox">
   <img
@@ -40,6 +75,8 @@
 <canvas id="motionCanvas" width="640" height="360" style="display:none;"></canvas>
 
 <script>
+  const CAMERA_RECORDING_MODE = "{{ camera_recording_mode|default('live') }}";
+
   const normalModeBtn = document.getElementById("normalModeBtn");
   const demoModeBtn = document.getElementById("demoModeBtn");
   const stopDetectionBtn = document.getElementById("stopDetectionBtn");
@@ -157,6 +194,12 @@
 
     stopWebcam();
 
+    if (CAMERA_RECORDING_MODE === "server") {
+      stopMotionDetection();
+      liveStatus.textContent = "Mode serveur : le live est affiché, la détection tourne sur le serveur";
+      return;
+    }
+
     liveStatus.textContent = "Mode caméra IP : surveillance active";
 
     startCanvasDrawing();
@@ -237,6 +280,11 @@
   }
 
   function startMotionDetection() {
+    if (CAMERA_RECORDING_MODE === "server" && currentMode === "ip") {
+      liveStatus.textContent = "Mode serveur : détection navigateur désactivée";
+      return;
+    }
+
     if (motionInterval) {
       clearInterval(motionInterval);
     }
@@ -301,6 +349,11 @@
   }
 
   function startAutoRecording() {
+    if (CAMERA_RECORDING_MODE === "server" && currentMode === "ip") {
+      liveStatus.textContent = "Mode serveur actif : l'enregistrement est géré par le serveur";
+      return;
+    }
+
     if (isRecording) {
       return;
     }
@@ -361,9 +414,14 @@
 
           setTimeout(() => {
             motionCooldown = false;
-            liveStatus.textContent = currentMode === "ip"
-              ? "Mode caméra IP : surveillance active"
-              : "Mode démo webcam : surveillance active";
+
+            if (CAMERA_RECORDING_MODE === "server" && currentMode === "ip") {
+              liveStatus.textContent = "Mode serveur : la détection tourne sur le serveur";
+            } else {
+              liveStatus.textContent = currentMode === "ip"
+                ? "Mode caméra IP : surveillance active"
+                : "Mode démo webcam : surveillance active";
+            }
           }, COOLDOWN_AFTER_RECORD_MS);
         }
       };

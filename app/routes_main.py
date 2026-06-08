@@ -33,6 +33,7 @@ from app import db
 from app.models import AlertSettings, AuditLog, Event, User
 from app.services.alert_settings import is_alert_allowed
 from app.services.audit import audit
+from app.services.camera_mode import get_camera_recording_mode, set_camera_recording_mode
 from mailer import send_alert_email
 
 
@@ -114,7 +115,12 @@ def live():
     audit("view_live", username=current_user.username)
 
     # Affiche la page du live caméra
-    return render_template("live.html")
+    camera_recording_mode = get_camera_recording_mode()
+
+    return render_template(
+        "live.html",
+        camera_recording_mode=camera_recording_mode
+    )
 
 
 @main_bp.get("/live_feed")
@@ -806,3 +812,27 @@ def admin_delete_user(user_id):
 
     flash("Utilisateur supprimé avec succès", "success")
     return redirect(url_for("main.admin_users"))
+
+@main_bp.post("/admin/camera-mode")
+@login_required
+@admin_required
+def admin_camera_mode():
+    mode = request.form.get("mode")
+
+    try:
+        set_camera_recording_mode(mode)
+    except ValueError:
+        flash("Mode caméra invalide", "danger")
+        return redirect(url_for("main.live"))
+
+    if mode == "server":
+        flash("Mode caméra activé : enregistrement même sans chargement de la page", "success")
+    else:
+        flash("Mode caméra activé : enregistrement uniquement si le live est chargé", "success")
+
+    audit(
+        f"change_camera_recording_mode:{mode}",
+        username=current_user.username
+    )
+
+    return redirect(url_for("main.live"))
