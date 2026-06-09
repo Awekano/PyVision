@@ -21,6 +21,15 @@
 {% endif %}
 
 {% if rows %}
+
+  <form method="post" action="{{ url_for('main.delete_all_recordings') }}"
+        onsubmit="return confirm('Voulez-vous vraiment supprimer tous les enregistrements ? Cette action est définitive.');"
+        style="margin-bottom: 20px;">
+    <button class="btn btn--danger" type="submit">
+      Supprimer tous les enregistrements
+    </button>
+  </form>
+
   <section class="recordings-grid">
     {% for row in rows %}
       <article class="card recording-card">

@@ -9,7 +9,7 @@ from app.models import Event
 
 
 # Durée maximale de conservation des vidéos selon la règle définie pour le projet
-RETENTION_DAYS = 30
+RETENTION_DAYS = 1
 
 # Dossier contenant les enregistrements vidéo
 RECORDINGS_DIR = "/home/enzo/eryma_web/recordings"
