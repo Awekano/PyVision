@@ -371,6 +371,30 @@ def _error_frame(text_value: str) -> bytes:
     ok, buffer = cv2.imencode(".jpg", frame)
     return buffer.tobytes() if ok else b""
 
+@main_bp.route("/recordings/delete-all", methods=["POST"])
+@login_required
+def delete_all_recordings():
+    recordings_dir = os.path.join(current_app.root_path, "static", "recordings")
+
+    deleted_files = 0
+
+    if os.path.exists(recordings_dir):
+        for filename in os.listdir(recordings_dir):
+            if filename.endswith((".mp4", ".mkv", ".webm", ".avi")):
+                file_path = os.path.join(recordings_dir, filename)
+
+                try:
+                    os.remove(file_path)
+                    deleted_files += 1
+                except OSError:
+                    pass
+
+    # Supprime aussi les événements liés aux vidéos dans la BDD
+    Event.query.filter(Event.video_filename.isnot(None)).delete()
+    db.session.commit()
+
+    flash(f"{deleted_files} enregistrement(s) s§upprimé(s)", "success")
+    return redirect(url_for("main.recordings"))
 
 @main_bp.post("/recordings/delete/<path:rel_path>")
 @login_required
@@ -563,27 +587,3 @@ def admin_delete_user(user_id):
     flash("Utilisateur supprimé avec succès", "success")
     return redirect(url_for("main.admin_users"))
 
-@main_bp.route("/recordings/delete-all", methods=["POST"])
-@login_required
-def delete_all_recordings():
-    recordings_dir = os.path.join(current_app.root_path, "static", "recordings")
-
-    deleted_files = 0
-
-    if os.path.exists(recordings_dir):
-        for filename in os.listdir(recordings_dir):
-            if filename.endswith((".mp4", ".mkv", ".webm", ".avi")):
-                file_path = os.path.join(recordings_dir, filename)
-
-                try:
-                    os.remove(file_path)
-                    deleted_files += 1
-                except OSError:
-                    pass
-
-    # Supprime aussi les événements liés aux vidéos dans la BDD
-    Event.query.filter(Event.video_filename.isnot(None)).delete()
-    db.session.commit()
-
-    flash(f"{deleted_files} enregistrement(s) s§upprimé(s)", "success")
-    return redirect(url_for("main.recordings"))
