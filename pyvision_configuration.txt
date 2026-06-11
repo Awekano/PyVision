@@ -1,0 +1,429 @@
+cat > CONFIGURATION_PYVISION.txt <<'EOF'
+============================================================
+GUIDE DE CONFIGURATION PYVISION
+Depot GitHub : https://github.com/Awekano/PyVision
+Branche utilisee : main
+Systeme conseille : Debian 12 ou Ubuntu Server
+============================================================
+
+1. OBJECTIF DES FICHIERS
+
+Ce dossier contient :
+
+- install_pyvision.sh
+  Installe PyVision depuis GitHub, les paquets Linux, les dependances Python,
+  MariaDB, Nginx, Gunicorn, FFmpeg et cloudflared
+
+- uninstall_pyvision.sh
+  Supprime le service PyVision et la configuration Nginx
+  La base de donnees, le dossier projet et cloudflared sont conserves par defaut
+  pour eviter une suppression accidentelle
+
+- CONFIGURATION_PYVISION.txt
+  Explique les etapes de configuration apres installation
+
+
+2. INSTALLATION SIMPLE
+
+Copier les fichiers sur le serveur, par exemple dans /home/enzo :
+
+    cd /home/enzo
+    chmod +x install_pyvision.sh uninstall_pyvision.sh
+    sudo ./install_pyvision.sh
+
+Par defaut, le script installe le projet dans :
+
+    /home/enzo/eryma_web
+
+Le service systemd cree s'appelle :
+
+    eryma.service
+
+Commandes utiles :
+
+    sudo systemctl status eryma
+    sudo journalctl -u eryma -f
+    sudo systemctl restart eryma
+
+
+3. INSTALLATION AVEC NOM DE DOMAINE ET MOT DE PASSE ADMIN DEFINI
+
+Exemple pour ton domaine PyVision :
+
+    sudo APP_USER=enzo \
+         INSTALL_DIR=/home/enzo/eryma_web \
+         DOMAIN=pyvision.enzofile.fr \
+         ADMIN_USERNAME=admin \
+         ADMIN_PASSWORD='MotDePasseSolideIci' \
+         ./install_pyvision.sh
+
+Si tu ne donnes pas ADMIN_PASSWORD, le script genere un mot de passe aleatoire
+et l'ecrit dans :
+
+    /home/enzo/pyvision_admin_credentials.txt
+
+Ce fichier est protege avec les droits 600
+
+
+4. FICHIER .env A CONFIGURER
+
+Le fichier principal a modifier est :
+
+    /home/enzo/eryma_web/.env
+
+Apres modification, redemarrer le service :
+
+    sudo systemctl restart eryma
+
+Variables importantes :
+
+    SECRET_KEY
+    Cle secrete Flask pour les sessions
+    Elle est generee automatiquement par le script
+
+    DATABASE_URL
+    Connexion MariaDB utilisee par Flask-SQLAlchemy
+    Exemple : mysql+pymysql://eryma_user:motdepasse@localhost/eryma_db
+
+    RTSP_URL
+    Adresse du flux camera utilisee pour le live web
+    Exemple : rtsp://utilisateur:motdepasse@172.20.0.50:554/Streaming/Channels/101
+
+    RTSP_TRANSPORT
+    Laisser tcp pour un flux plus stable
+
+    MJPEG_QUALITY
+    Qualite JPEG du live envoye au navigateur
+    Exemple : 80
+
+    CAMERA_URL
+    Adresse camera utilisee par certaines fonctions de detection serveur
+    Mets la meme valeur que RTSP_URL
+
+    RECORDINGS_DIR
+    Dossier de stockage des videos
+    Exemple : /home/enzo/eryma_web/recordings
+
+    MOTION_MIN_AREA
+    Sensibilite de detection
+    Plus la valeur est basse, plus la detection est sensible
+    Exemple : 2500
+
+    RECORD_SECONDS
+    Duree d'enregistrement apres detection
+    Exemple : 15
+
+    SMTP_HOST
+    Serveur SMTP
+    Exemple Gmail : smtp.gmail.com
+
+    SMTP_PORT
+    Port SMTP SSL
+    Exemple Gmail : 465
+
+    SMTP_USER
+    Adresse mail utilisee pour envoyer les alertes
+
+    SMTP_PASSWORD
+    Mot de passe d'application SMTP
+    Pour Gmail, il faut utiliser un mot de passe d'application, pas le mot de passe normal
+
+    SMTP_FROM
+    Adresse expediteur du mail
+    Peut etre la meme que SMTP_USER
+
+    ALERT_EMAIL_TO
+    Adresse mail qui recoit les alertes
+
+
+5. EXEMPLE DE .env POUR PYVISION
+
+Exemple a adapter :
+
+    SECRET_KEY=cle_generee_par_le_script
+    DATABASE_URL=mysql+pymysql://eryma_user:motdepasse@localhost/eryma_db
+
+    RTSP_URL=rtsp://admin:motdepassecamera@172.20.0.50:554/Streaming/Channels/101
+    RTSP_TRANSPORT=tcp
+    MJPEG_QUALITY=80
+
+    CAMERA_URL=rtsp://admin:motdepassecamera@172.20.0.50:554/Streaming/Channels/101
+    RECORDINGS_DIR=/home/enzo/eryma_web/recordings
+    MOTION_MIN_AREA=2500
+    RECORD_SECONDS=15
+
+    SMTP_HOST=smtp.gmail.com
+    SMTP_PORT=465
+    SMTP_USER=adresse@gmail.com
+    SMTP_PASSWORD=mot_de_passe_application_gmail
+    SMTP_FROM=adresse@gmail.com
+    ALERT_EMAIL_TO=destinataire@example.com
+
+
+6. CONFIGURATION CAMERA IP
+
+La camera doit etre joignable depuis le serveur Debian ou Ubuntu
+
+Tests a faire depuis le serveur :
+
+    ping 172.20.0.50
+    ffprobe 'rtsp://utilisateur:motdepasse@172.20.0.50:554/Streaming/Channels/101'
+
+Si ffprobe ne trouve pas le flux, verifier :
+
+- IP de la camera
+- identifiant et mot de passe camera
+- chemin RTSP exact du modele
+- VLAN ou routage reseau
+- pare-feu ou filtrage du switch
+
+Pour une camera Hikvision/Hanwha, les chemins peuvent changer selon le modele
+Exemples courants :
+
+    rtsp://user:password@IP:554/Streaming/Channels/101
+    rtsp://user:password@IP:554/profile2/media.smp
+    rtsp://user:password@IP:554/cam/realmonitor?channel=1&subtype=0
+
+
+7. CONFIGURATION NGINX
+
+Le script cree :
+
+    /etc/nginx/sites-available/pyvision.conf
+    /etc/nginx/sites-enabled/pyvision.conf
+
+Nginx ecoute sur le port 80 et redirige vers Gunicorn en local :
+
+    http://127.0.0.1:8000
+
+Verifier la configuration :
+
+    sudo nginx -t
+    sudo systemctl reload nginx
+
+Tester en local :
+
+    curl -I http://127.0.0.1
+    curl -I http://127.0.0.1:8000
+
+
+8. CONFIGURATION CLOUDFLARE TUNNEL AVEC TOKEN DASHBOARD
+
+Methode simple conseillee :
+
+1. Aller dans Cloudflare Zero Trust
+2. Networks
+3. Tunnels
+4. Create tunnel
+5. Choisir cloudflared
+6. Choisir Debian / Ubuntu
+7. Copier la commande d'installation donnee par Cloudflare
+
+Tu peux aussi lancer directement le script avec le token Cloudflare :
+
+    sudo CLOUDFLARED_TOKEN='coller_le_token_cloudflare_ici' ./install_pyvision.sh
+
+Dans Cloudflare, l'URL publique doit pointer vers le service local :
+
+    http://localhost
+
+ou directement vers Gunicorn :
+
+    http://localhost:8000
+
+Je conseille http://localhost car Nginx gere deja le reverse proxy
+
+
+9. CONFIGURATION CLOUDFLARE TUNNEL MANUELLE
+
+Connexion Cloudflare :
+
+    cloudflared tunnel login
+
+Creation du tunnel :
+
+    cloudflared tunnel create pyvision
+
+Creation du DNS :
+
+    cloudflared tunnel route dns pyvision pyvision.enzofile.fr
+
+Creer ou modifier :
+
+    /home/enzo/.cloudflared/config.yml
+
+Exemple :
+
+    tunnel: UUID_DU_TUNNEL
+    credentials-file: /home/enzo/.cloudflared/UUID_DU_TUNNEL.json
+
+    ingress:
+      - hostname: pyvision.enzofile.fr
+        service: http://localhost
+      - service: http_status:404
+
+Installer le tunnel en service systemd :
+
+    sudo cloudflared --config /home/enzo/.cloudflared/config.yml service install
+    sudo systemctl enable --now cloudflared
+    sudo systemctl status cloudflared
+
+Apres modification de config.yml :
+
+    sudo systemctl restart cloudflared
+
+
+10. CONFIGURATION SMTP GMAIL
+
+Pour Gmail, il faut :
+
+1. Activer la validation en deux etapes sur le compte Google
+2. Creer un mot de passe d'application
+3. Mettre ce mot de passe dans SMTP_PASSWORD
+
+Exemple :
+
+    SMTP_HOST=smtp.gmail.com
+    SMTP_PORT=465
+    SMTP_USER=monadresse@gmail.com
+    SMTP_PASSWORD=mot_de_passe_application
+    SMTP_FROM=monadresse@gmail.com
+    ALERT_EMAIL_TO=destinataire@example.com
+
+Redemarrer ensuite :
+
+    sudo systemctl restart eryma
+
+
+11. BASE DE DONNEES MARIADB
+
+Le script cree automatiquement :
+
+    Base : eryma_db
+    Utilisateur : eryma_user
+
+Les tables sont creees automatiquement par Flask au lancement du projet
+
+Pour ouvrir MariaDB :
+
+    sudo mysql
+
+Voir les tables :
+
+    USE eryma_db;
+    SHOW TABLES;
+
+
+12. MISE A JOUR DU PROJET DEPUIS GITHUB
+
+Pour mettre a jour PyVision depuis la branche main :
+
+    cd /home/enzo/eryma_web
+    git pull origin main
+    .venv/bin/pip install -r requirements.txt
+    sudo systemctl restart eryma
+
+Si tu as modifie des fichiers localement, fais attention aux conflits Git
+
+
+13. DESINSTALLATION SIMPLE
+
+Supprimer le service PyVision et la configuration Nginx :
+
+    sudo ./uninstall_pyvision.sh
+
+Par defaut, cette commande conserve :
+
+- le dossier /home/enzo/eryma_web
+- la base MariaDB eryma_db
+- cloudflared
+- les paquets systeme
+
+
+14. DESINSTALLATION COMPLETE
+
+Suppression du projet, de la BDD et de cloudflared :
+
+    sudo PURGE_DATA=true \
+         PURGE_DATABASE=true \
+         REMOVE_CLOUDFLARED=true \
+         ./uninstall_pyvision.sh
+
+Suppression en plus de certains paquets systeme :
+
+    sudo PURGE_DATA=true \
+         PURGE_DATABASE=true \
+         REMOVE_CLOUDFLARED=true \
+         PURGE_PACKAGES=true \
+         ./uninstall_pyvision.sh
+
+Attention : PURGE_PACKAGES=true peut supprimer Nginx et MariaDB meme s'ils servent a autre chose
+
+
+15. COMMANDES DE DEPANNAGE
+
+Voir le statut de PyVision :
+
+    sudo systemctl status eryma
+
+Voir les logs PyVision :
+
+    sudo journalctl -u eryma -f
+
+Voir les logs Nginx :
+
+    sudo tail -f /var/log/nginx/error.log
+    sudo tail -f /var/log/nginx/access.log
+
+Tester Gunicorn directement :
+
+    cd /home/enzo/eryma_web
+    source .venv/bin/activate
+    gunicorn --timeout 120 -w 3 -b 127.0.0.1:8000 run:app
+
+Tester le live :
+
+    curl -I http://127.0.0.1/live
+
+Tester le tunnel :
+
+    sudo systemctl status cloudflared
+    sudo journalctl -u cloudflared -f
+
+Tester la camera :
+
+    ffprobe 'rtsp://utilisateur:motdepasse@172.20.0.50:554/Streaming/Channels/101'
+
+
+16. POINT IMPORTANT SUR LES VARIABLES CAMERA
+
+Dans le projet actuel :
+
+- RTSP_URL est utilise par la configuration Flask pour le live
+- CAMERA_URL est utilise par certaines fonctions de detection serveur
+
+Pour eviter les erreurs, mets la meme URL dans les deux variables
+
+
+17. ORDRE CONSEILLE APRES INSTALLATION
+
+1. Modifier /home/enzo/eryma_web/.env
+2. Mettre RTSP_URL et CAMERA_URL
+3. Mettre SMTP_HOST, SMTP_USER, SMTP_PASSWORD, SMTP_FROM, ALERT_EMAIL_TO
+4. Redemarrer PyVision
+
+    sudo systemctl restart eryma
+
+5. Tester en local
+
+    http://IP_DU_SERVEUR
+
+6. Configurer Cloudflare Tunnel
+7. Tester le domaine public
+
+    https://pyvision.enzofile.fr
+
+============================================================
+FIN DU GUIDE
+============================================================
+EOF
