@@ -19,20 +19,19 @@ from mailer import send_alert_email
 
 
 # Durée de chaque vidéo enregistrée après détection
-RECORD_SECONDS = 15
+RECORD_SECONDS = 30
 
 # Temps minimum entre deux enregistrements
-# Valeur basse pour les tests
-COOLDOWN_SECONDS = 15
+COOLDOWN_SECONDS = 2
 
-# Sensibilité ultra forte pour les tests
+# Sensibilité 
 MIN_MOTION_AREA = 5000
 MOTION_FRAMES_REQUIRED = 15
 
 # Paramètres vidéo
 FRAME_WIDTH = 960
 FRAME_HEIGHT = 540
-FPS = 25
+FPS = 20
 
 
 def get_recordings_dir():

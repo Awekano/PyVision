@@ -34,13 +34,68 @@
 
 <p id="liveStatus">Chargement du flux caméra IP...</p>
 
-<div id="serverLiveBox">
+<style>
+  .live-box {
+    position: relative;
+    max-width: 900px;
+    width: 100%;
+    background: #000;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+
+  .live-image {
+    width: 100%;
+    display: block;
+    background: #000;
+  }
+
+  .fullscreen-btn {
+    position: absolute;
+    right: 12px;
+    bottom: 12px;
+    padding: 10px 14px;
+    border: none;
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.75);
+    color: white;
+    cursor: pointer;
+    font-size: 14px;
+  }
+
+  .fullscreen-btn:hover {
+    background: rgba(0, 0, 0, 0.95);
+  }
+
+  .live-box:fullscreen {
+    max-width: none;
+    width: 100vw;
+    height: 100vh;
+    border-radius: 0;
+  }
+
+  .live-box:fullscreen .live-image {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+
+  .live-box:fullscreen .fullscreen-btn {
+    z-index: 10;
+  }
+</style>
+
+<div id="serverLiveBox" class="live-box">
   <img
     id="serverLive"
     src="{{ url_for('main.live_feed') }}"
     alt="Flux live caméra IP"
-    style="max-width:900px; width:100%; border-radius:12px; background:#000;"
+    class="live-image"
   >
+
+  <button type="button" id="fullscreenBtn" class="fullscreen-btn">
+    ⛶ Plein écran
+  </button>
 </div>
 
 <script>
@@ -48,10 +103,22 @@
   const lastEventInfo = document.getElementById("lastEventInfo");
   const liveStatus = document.getElementById("liveStatus");
   const serverLive = document.getElementById("serverLive");
+  const serverLiveBox = document.getElementById("serverLiveBox");
+  const fullscreenBtn = document.getElementById("fullscreenBtn");
 
   function refreshLiveImage() {
     const baseUrl = "{{ url_for('main.live_feed') }}";
     serverLive.src = `${baseUrl}?t=${Date.now()}`;
+  }
+
+  function toggleFullscreen() {
+    if (!document.fullscreenElement) {
+      serverLiveBox.requestFullscreen().catch(error => {
+        console.error("Erreur plein écran :", error);
+      });
+    } else {
+      document.exitFullscreen();
+    }
   }
 
   async function refreshDetectionStatus() {
@@ -91,6 +158,8 @@
     liveStatus.textContent = "Erreur flux live, tentative de reconnexion...";
     setTimeout(refreshLiveImage, 3000);
   });
+
+  fullscreenBtn.addEventListener("click", toggleFullscreen);
 
   refreshDetectionStatus();
   setInterval(refreshDetectionStatus, 5000);

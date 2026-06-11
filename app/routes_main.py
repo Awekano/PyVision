@@ -5,8 +5,9 @@
 import mimetypes
 import os
 import time as time_module
-from datetime import datetime, time as dt_time
+from datetime import datetime, time as dt_time, timezone
 from functools import wraps
+from zoneinfo import ZoneInfo
 
 import cv2
 from flask import (
@@ -31,7 +32,18 @@ from app.services.audit import audit
 
 
 main_bp = Blueprint("main", __name__)
+PARIS_TZ = ZoneInfo("Europe/Paris")
 
+
+def to_paris_time(value):
+    # Convertit une date UTC de la base de données en heure française
+    if value is None:
+        return None
+
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+
+    return value.astimezone(PARIS_TZ)
 VIDEO_EXT = {".mp4", ".mkv", ".webm", ".avi", ".mov"}
 INLINE_VIDEO_EXT = {".mp4", ".mkv", ".webm", ".mov"}
 
@@ -66,7 +78,12 @@ def events():
 
     audit("view_events", username=current_user.username)
 
-    return render_template("events.html", events=rows, selected_kind=kind)
+    return render_template(
+        "events.html",
+        events=rows,
+        selected_kind=kind,
+        local_datetime=to_paris_time,
+    )
 
 
 @main_bp.get("/audit")
@@ -123,7 +140,7 @@ def detection_status():
                 "id": latest_event.id,
                 "kind": latest_event.kind,
                 "video_path": latest_event.video_path,
-                "created_at": latest_event.created_at.strftime("%d/%m/%Y %H:%M:%S"),
+                "created_at": to_paris_time(latest_event.created_at).strftime("%d/%m/%Y %H:%M:%S"),
             }
             if latest_event
             else None,
@@ -374,27 +391,41 @@ def _error_frame(text_value: str) -> bytes:
 @main_bp.route("/recordings/delete-all", methods=["POST"])
 @login_required
 def delete_all_recordings():
-    recordings_dir = os.path.join(current_app.root_path, "static", "recordings")
+    try:
+        base_dir = _recordings_dir()
+        deleted_files = 0
 
-    deleted_files = 0
+        if not os.path.isdir(base_dir):
+            flash("Dossier recordings introuvable", "danger")
+            return redirect(url_for("main.recordings"))
 
-    if os.path.exists(recordings_dir):
-        for filename in os.listdir(recordings_dir):
-            if filename.endswith((".mp4", ".mkv", ".webm", ".avi")):
-                file_path = os.path.join(recordings_dir, filename)
+        for root, _, files in os.walk(base_dir):
+            for name in files:
+                ext = os.path.splitext(name)[1].lower()
 
-                try:
-                    os.remove(file_path)
+                if ext not in VIDEO_EXT:
+                    continue
+
+                abs_path = os.path.abspath(os.path.join(root, name))
+
+                if not abs_path.startswith(base_dir + os.sep):
+                    continue
+
+                if os.path.isfile(abs_path):
+                    os.remove(abs_path)
                     deleted_files += 1
-                except OSError:
-                    pass
 
-    # Supprime aussi les événements liés aux vidéos dans la BDD
-    Event.query.filter(Event.video_filename.isnot(None)).delete()
-    db.session.commit()
+        Event.query.filter(Event.video_path.isnot(None)).delete(synchronize_session=False)
+        db.session.commit()
 
-    flash(f"{deleted_files} enregistrement(s) s§upprimé(s)", "success")
-    return redirect(url_for("main.recordings"))
+        flash(f"{deleted_files} enregistrement(s) supprimé(s)", "success")
+        return redirect(url_for("main.recordings"))
+
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.exception("Erreur delete_all_recordings")
+        flash(f"Erreur lors de la suppression globale : {e}", "danger")
+        return redirect(url_for("main.recordings"))
 
 @main_bp.post("/recordings/delete/<path:rel_path>")
 @login_required
